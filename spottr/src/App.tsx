@@ -10,45 +10,45 @@ function App() {
 
       <div className="relative z-10 p-8 max-w-4xl mx-auto">
         <h1 className="gradient-text text-5xl font-extrabold mb-2" style={{fontFamily: 'Playfair Display, serif'}}>
-          Spottr Setup Test
+          Spottr 💪
         </h1>
-        <p className="text-slate-300 mb-8">Phase 1: Glassmorphism UI verification</p>
+        <p className="text-slate-300 mb-8">Your premium workout tracking companion — coming soon!</p>
 
-        <div className="glass-card max-w-md mb-6">
-          <h2 className="text-2xl font-extrabold mb-4" style={{fontFamily: 'Playfair Display, serif'}}>
-            Glass Card
-          </h2>
-          <p className="text-slate-300 mb-4">
-            This card has a frosted glass effect with backdrop blur and subtle border.
-          </p>
-          <button className="glass-button">
-            Get Started
-          </button>
-        </div>
-
-        <div className="glass-card max-w-md">
-          <h3 className="text-xl font-semibold mb-3">Test Input</h3>
-          <input
-            type="text"
-            className="glass-input w-full"
-            placeholder="Type something..."
-          />
-        </div>
-
-        <div className="mt-8 flex gap-4">
-          <div className="glass-card p-4 text-center">
-            <div className="text-3xl font-bold text-accent">12</div>
-            <div className="text-sm text-slate-300">Workouts</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="glass-card">
+            <h2 className="text-2xl font-extrabold mb-4" style={{fontFamily: 'Playfair Display, serif'}}>
+              Status 🟢
+            </h2>
+            <ul className="space-y-2 text-slate-300 text-sm">
+              <li>✅ Phase 1 — Project foundation & glassmorphism UI</li>
+              <li>✅ Phase 2 — Database layer (Dexie.js + 8 tables)</li>
+              <li>⏳ Phase 3 — Core CRUD components (in progress)</li>
+              <li>⏳ Phase 4 — Media handling & compression</li>
+              <li>⏳ Phase 5 — Workout execution flow</li>
+              <li>⏳ Phase 6 — Progressive overload system</li>
+            </ul>
           </div>
-          <div className="glass-card p-4 text-center">
-            <div className="text-3xl font-bold text-accent">5</div>
-            <div className="text-sm text-slate-300">Streak</div>
-          </div>
-          <div className="glass-card p-4 text-center">
-            <div className="text-3xl font-bold text-accent">35</div>
-            <div className="text-sm text-slate-300">PRs</div>
+
+          <div className="glass-card">
+            <h2 className="text-2xl font-extrabold mb-4" style={{fontFamily: 'Playfair Display, serif'}}>
+              Tech Stack ⚡
+            </h2>
+            <ul className="space-y-2 text-slate-300 text-sm">
+              <li>🎨 React 19 + TypeScript + Vite</li>
+              <li>💎 Tailwind CSS + Glassmorphism</li>
+              <li>🗄️ Dexie.js (IndexedDB)</li>
+              <li>🧠 Zustand (state management)</li>
+              <li>📦 JSZip (export / import backups)</li>
+              <li>📅 date-fns + uuid</li>
+            </ul>
           </div>
         </div>
+
+        <p className="text-slate-500 text-xs mt-8 text-center">
+          📖 <a href="?test" className="text-accent hover:underline">Run Phase 2 Database Tests</a> 
+          &nbsp;&bull;&nbsp;
+          <a href="/phase2-verify.html" className="text-accent hover:underline">Standalone HTML Test</a>
+        </p>
       </div>
     </div>
   )

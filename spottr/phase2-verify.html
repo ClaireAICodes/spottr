@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spottr — Phase 2 Verification</title>
+<script src="https://unpkg.com/dexie@4.4.2/dist/dexie.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Inter,system-ui,-apple-system,sans-serif;background:linear-gradient(180deg,#0f172a 0%,#1e293b 50%,#0f172a 100%);min-height:100vh;color:#f8fafc;padding:2rem}
+h1{font-family:'Playfair Display',serif;font-size:2.5rem;background:linear-gradient(135deg,#fff,#38bdf8,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin-bottom:.5rem}
+.sub{text-align:center;color:#94a3b8;margin-bottom:2rem}
+#run-btn{display:block;margin:0 auto 2rem;background:linear-gradient(135deg,#38bdf8,#6366f1);color:#fff;border:none;border-radius:9999px;padding:.75rem 2rem;font-weight:600;font-size:1rem;cursor:pointer;box-shadow:0 4px 15px rgba(56,189,248,.3);transition:all .3s}
+#run-btn:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(56,189,248,.4)}
+#run-btn:disabled{opacity:.5;cursor:not-allowed}
+.group{max-width:800px;margin:0 auto 1rem;background:rgba(30,41,59,.7);border:1px solid rgba(255,255,255,.1);border-radius:24px;backdrop-filter:blur(12px);padding:1.5rem;box-shadow:0 25px 50px -12px rgba(0,0,0,.5)}
+.group h2{font-size:1.25rem;margin-bottom:.75rem;color:#38bdf8}
+.result{display:flex;gap:.75rem;align-items:flex-start;padding:.5rem;border-radius:8px;margin-bottom:.25rem;font-size:.9rem}
+.result.pass{background:rgba(52,211,153,.1)}
+.result.fail{background:rgba(239,68,68,.1)}
+.result .icon{font-size:1.1rem;flex-shrink:0}
+.result .name{font-family:monospace;color:#f8fafc}
+.result .detail{color:#94a3b8;font-size:.8rem;margin-top:.15rem}
+.result .detail.err{color:#f87171}
+#summary{text-align:center;font-size:1.2rem;margin-bottom:1.5rem;font-weight:600}
+#summary.pass{color:#34d399}
+#summary.fail{color:#f87171}
+</style>
+</head>
+<body>
+<h1>Spottr — Phase 2 Tests</h1>
+<p class="sub">Dexie.js IndexedDB verification (standalone, no server needed)</p>
+<button id="run-btn" onclick="runAll()">🧪 Run All Tests</button>
+<div id="summary"></div>
+<div id="output"></div>
+
+<script>
+const results = [];
+function ok(group, name, cond, detail) {
+  results.push({ group, name, pass: !!cond, detail: cond ? detail : ('FAIL: ' + detail) });
+}
+
+async function runAll() {
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Running…';
+  document.getElementById('summary').textContent = '';
+  document.getElementById('output').innerHTML = '';
+  results.length = 0;
+
+  // Delete any prior DB
+  await Dexie.delete('spottr-db').catch(() => {});
+
+  // ── Define schema exactly like src/db/schema.ts ──
+  const db = new Dexie('spottr-db');
+  db.version(1).stores({
+    gyms: '++id, name',
+    exerciseDefinitions: '++id, name',
+    exerciseMedia: '++id, exerciseId, mediaType',
+    workouts: '++id, gymId, name',
+    workoutExercises: '++id, workoutId, exerciseId, orderIndex',
+    workoutSetTargets: '++id, [workoutExerciseId+setNumber]',
+    workoutSessions: '++id, workoutId, startTime, endTime',
+    setLogs: '++id, workoutSessionId, exerciseId, setNumber, isPR',
+  });
+  await db.open();
+
+  try {
+    /* ── 1. SCHEMA ── */
+    const tables = db.tables.map(t => t.name);
+    ok('Schema', '8 tables exist', tables.length === 8, `${tables.length} tables`);
+
+    const expected = ['gyms','exerciseDefinitions','exerciseMedia','workouts','workoutExercises','workoutSetTargets','workoutSessions','setLogs'];
+    const missing = expected.filter(e => !tables.includes(e));
+    ok('Schema', 'All required tables', missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : '✓');
+
+    // Check compound index exists on workoutSetTargets
+    const wks = db.table('workoutSetTargets');
+    const hasCompound = wks.schema.indexes.some(i => i.compound);
+    ok('Schema', 'Compound index on workoutSetTargets', hasCompound, wks.schema.indexes.map(i => i.name).join(', '));
+
+    /* ── 2. CRUD CREATE ── */
+    const gymId = await db.gyms.add({ name: 'Home Gym', address: 'Singapore', latitude: 1.2834, longitude: 103.8607, createdAt: new Date() });
+    ok('CRUD', 'Create gym', Number.isInteger(gymId) && gymId > 0, `id=${gymId}`);
+
+    const exId = await db.exerciseDefinitions.add({ name: 'Bench Press', notes: 'Flat barbell bench', createdAt: new Date() });
+    ok('CRUD', 'Create exercise', Number.isInteger(exId) && exId > 0, `id=${exId}`);
+
+    const wkId = await db.workouts.add({ gymId, name: 'Push Day – Heavy', createdAt: new Date() });
+    ok('CRUD', 'Create workout', Number.isInteger(wkId) && wkId > 0, `id=${wkId}`);
+
+    const wkExId = await db.workoutExercises.add({ workoutId: wkId, exerciseId: exId, orderIndex: 0 });
+    ok('CRUD', 'Create workoutExercise', Number.isInteger(wkExId) && wkExId > 0, `id=${wkExId}`);
+
+    const tIds = await db.workoutSetTargets.bulkAdd([
+      { workoutExerciseId: wkExId, setNumber: 1, targetReps: 15, targetWeight: 20, targetWeightUnit: 'kg' },
+      { workoutExerciseId: wkExId, setNumber: 2, targetReps: 10, targetWeight: 60, targetWeightUnit: 'kg' },
+      { workoutExerciseId: wkExId, setNumber: 3, targetReps: 8,  targetWeight: 80, targetWeightUnit: 'kg' },
+      { workoutExerciseId: wkExId, setNumber: 4, targetReps: 6,  targetWeight: 90, targetWeightUnit: 'kg' },
+    ]);
+    ok('CRUD', 'Bulk-add 4 set targets', tIds.length === 4, `${tIds.length} targets`);
+
+    /* ── 3. READ ── */
+    const gym = await db.gyms.get(gymId);
+    ok('Read', 'Gym by ID', gym?.name === 'Home Gym', `"${gym?.name}"`);
+    ok('Read', 'Gym coordinates', gym?.latitude === 1.2834, `lat=${gym?.latitude}`);
+
+    const exercise = await db.exerciseDefinitions.get(exId);
+    ok('Read', 'Exercise by ID', exercise?.name === 'Bench Press', `"${exercise?.name}"`);
+    ok('Read', 'Exercise notes', exercise?.notes === 'Flat barbell bench', `"${exercise?.notes}"`);
+
+    const wk = await db.workouts.get(wkId);
+    ok('Read', 'Workout→gym link', wk?.gymId === gymId, `gymId=${wk?.gymId}`);
+
+    /* ── 4. COMPOUND INDEX ── */
+    const s3 = await db.workoutSetTargets.where('[workoutExerciseId+setNumber]').equals([wkExId, 3]).first();
+    ok('Compound Index', 'Set 3 query', s3?.targetWeight === 80 && s3?.targetReps === 8, `${s3?.targetReps}@${s3?.targetWeight}kg`);
+
+    const none = await db.workoutSetTargets.where('[workoutExerciseId+setNumber]').equals([wkExId, 99]).first();
+    ok('Compound Index', 'Non-existent → undefined', none === undefined, 'none found');
+
+    const sorted = await db.workoutSetTargets.where('workoutExerciseId').equals(wkExId).sortBy('setNumber');
+    ok('Compound Index', 'Sorted by setNumber', sorted.length === 4 && sorted[3].setNumber === 4, `sets [${sorted.map(s => s.setNumber).join(',')}]`);
+
+    /* ── 5. SESSIONS & LOGS ── */
+    const sid = await db.workoutSessions.add({ workoutId: wkId, startTime: new Date() });
+    ok('Sessions', 'Start session', Number.isInteger(sid) && sid > 0, `sid=${sid}`);
+
+    await db.setLogs.add({ workoutSessionId: sid, exerciseId: exId, setNumber: 1, actualWeight: 60, actualReps: 10, restTimeTaken: 60, isPR: false, createdAt: new Date() });
+    await db.setLogs.add({ workoutSessionId: sid, exerciseId: exId, setNumber: 2, actualWeight: 100, actualReps: 8, restTimeTaken: 90, isPR: true, createdAt: new Date() });
+
+    const bySession = await db.setLogs.where('workoutSessionId').equals(sid).toArray();
+    ok('Logs', 'By session', bySession.length === 2, `${bySession.length} logs`);
+
+    const byExercise = await db.setLogs.where('exerciseId').equals(exId).toArray();
+    ok('Logs', 'By exercise', byExercise.length === 2, `${byExercise.length} logs`);
+
+    /* ── 6. PR FILTER ── */
+    const allLogs = await db.setLogs.toArray();
+    const prs = allLogs.filter(l => l.isPR === true);
+    ok('PR', 'PR filter works', prs.length === 1, `${prs.length} PR found`);
+    if (prs.length) ok('PR', 'PR weight correct', prs[0].actualWeight === 100, `${prs[0].actualWeight}kg`);
+
+    /* ── 7. BLOB STORAGE ── */
+    const canvas = document.createElement('canvas');
+    canvas.width = 128; canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#38bdf8'; ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 32px sans-serif'; ctx.fillText('PR!', 25, 70);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+
+    const mediaId = await db.exerciseMedia.add({ exerciseId: exId, mediaBlob: blob, mediaType: 'image', sortOrder: 1, createdAt: new Date() });
+    ok('Blob', 'Store image', Number.isInteger(mediaId) && mediaId > 0, `id=${mediaId}, size=${blob.size} bytes`);
+
+    const fetched = await db.exerciseMedia.get(mediaId);
+    const rb = fetched?.mediaBlob;
+    ok('Blob', 'Retrieve as Blob', rb instanceof Blob, `${rb?.constructor.name}`);
+    ok('Blob', 'Size preserved', rb?.size === blob.size, `${rb?.size} === ${blob.size}`);
+    ok('Blob', 'Type preserved', rb?.type === 'image/png', `"${rb?.type}"`);
+
+    /* ── 8. DELETE ── */
+    const cBefore = await db.workouts.count();
+    await db.workouts.delete(wkId);
+    const cAfter = await db.workouts.count();
+    ok('Delete', 'Delete workout', cAfter === cBefore - 1, `${cBefore} → ${cAfter}`);
+
+    await db.exerciseMedia.delete(mediaId);
+    ok('Delete', 'Delete media', (await db.exerciseMedia.count()) === 0, 'count=0');
+
+    /* ── 9. EMPTY STATES ── */
+    const eGyms = await db.gyms.toArray();
+    ok('Edge', 'Empty gym array', eGyms.length === 1, `${eGyms.length}`);
+
+    const eCompound = await db.workoutSetTargets.where('[workoutExerciseId+setNumber]').equals([99999, 1]).first();
+    ok('Edge', 'Empty compound → undefined', eCompound === undefined, 'none');
+
+    /* ── 10. END-TO-END ── */
+    await db.delete();
+    await db.open();
+
+    const gId = await db.gyms.add({ name: "Gold's Gym", createdAt: new Date() });
+    const bp = await db.exerciseDefinitions.add({ name: 'Barbell Bench Press', createdAt: new Date() });
+    const sq = await db.exerciseDefinitions.add({ name: 'Barbell Back Squat', createdAt: new Date() });
+    const ohp = await db.exerciseDefinitions.add({ name: 'Overhead Press', createdAt: new Date() });
+
+    const wId = await db.workouts.add({ gymId: gId, name: 'Push Day', createdAt: new Date() });
+
+    const bwe = await db.workoutExercises.add({ workoutId: wId, exerciseId: bp, orderIndex: 0 });
+    await db.workoutSetTargets.bulkAdd([
+      { workoutExerciseId: bwe, setNumber: 1, targetReps: 15, targetWeight: 40, targetWeightUnit: 'kg' },
+      { workoutExerciseId: bwe, setNumber: 2, targetReps: 12, targetWeight: 60, targetWeightUnit: 'kg' },
+      { workoutExerciseId: bwe, setNumber: 3, targetReps: 8, targetWeight: 80, targetWeightUnit: 'kg' },
+      { workoutExerciseId: bwe, setNumber: 4, targetReps: 6, targetWeight: 90, targetWeightUnit: 'kg' },
+    ]);
+
+    const swe = await db.workoutExercises.add({ workoutId: wId, exerciseId: sq, orderIndex: 1 });
+    await db.workoutSetTargets.bulkAdd([
+      { workoutExerciseId: swe, setNumber: 1, targetReps: 12, targetWeight: 60, targetWeightUnit: 'kg' },
+      { workoutExerciseId: swe, setNumber: 2, targetReps: 10, targetWeight: 80, targetWeightUnit: 'kg' },
+      { workoutExerciseId: swe, setNumber: 3, targetReps: 8, targetWeight: 100, targetWeightUnit: 'kg' },
+    ]);
+
+    const owe = await db.workoutExercises.add({ workoutId: wId, exerciseId: ohp, orderIndex: 2 });
+    await db.workoutSetTargets.bulkAdd([
+      { workoutExerciseId: owe, setNumber: 1, targetReps: 10, targetWeight: 30, targetWeightUnit: 'kg' },
+      { workoutExerciseId: owe, setNumber: 2, targetReps: 8, targetWeight: 40, targetWeightUnit: 'kg' },
+    ]);
+
+    const sessionId = await db.workoutSessions.add({ workoutId: wId, startTime: new Date() });
+
+    // Bench: 4 sets, last one PR
+    const benchSets = [
+      { n: 1, w: 40, r: 15, pr: false },
+      { n: 2, w: 60, r: 12, pr: false },
+      { n: 3, w: 80, r: 8, pr: false },
+      { n: 4, w: 95, r: 6, pr: true },
+    ];
+    for (const s of benchSets) {
+      await db.setLogs.add({ workoutSessionId: sessionId, exerciseId: bp, setNumber: s.n, actualWeight: s.w, actualReps: s.r, restTimeTaken: 60, isPR: s.pr, createdAt: new Date() });
+    }
+    // Squat: 3 sets, last PR
+    await db.setLogs.add({ workoutSessionId: sessionId, exerciseId: sq, setNumber: 1, actualWeight: 60, actualReps: 12, restTimeTaken: 60, isPR: false, createdAt: new Date() });
+    await db.setLogs.add({ workoutSessionId: sessionId, exerciseId: sq, setNumber: 2, actualWeight: 80, actualReps: 10, restTimeTaken: 90, isPR: false, createdAt: new Date() });
+    await db.setLogs.add({ workoutSessionId: sessionId, exerciseId: sq, setNumber: 3, actualWeight: 105, actualReps: 8, restTimeTaken: 120, isPR: true, createdAt: new Date() });
+    // OHP: 2 sets, last PR
+    await db.setLogs.add({ workoutSessionId: sessionId, exerciseId: ohp, setNumber: 1, actualWeight: 30, actualReps: 10, restTimeTaken: 60, isPR: false, createdAt: new Date() });
+    await db.setLogs.add({ workoutSessionId: sessionId, exerciseId: ohp, setNumber: 2, actualWeight: 42, actualReps: 8, restTimeTaken: 120, isPR: true, createdAt: new Date() });
+
+    const e2eLogs = await db.setLogs.where('workoutSessionId').equals(sessionId).toArray();
+    const e2eAll = await db.setLogs.toArray();
+    const e2ePRs = e2eAll.filter(l => l.isPR === true);
+    const vol = e2eLogs.reduce((s, l) => s + l.actualWeight * l.actualReps, 0);
+    const benchCount = e2eLogs.filter(l => l.exerciseId === bp).length;
+    const squatCount = e2eLogs.filter(l => l.exerciseId === sq).length;
+    const ohpCount = e2eLogs.filter(l => l.exerciseId === ohp).length;
+
+    ok('E2E', 'Total 9 sets', e2eLogs.length === 9, `${e2eLogs.length}`);
+    ok('E2E', '3 PRs (bench PR 95kg, squat PR 105kg, ohp PR 42kg)', e2ePRs.length === 3, `${e2ePRs.length}`);
+    ok('E2E', 'Bench: 4 sets', benchCount === 4, `${benchCount}`);
+    ok('E2E', 'Squat: 3 sets', squatCount === 3, `${squatCount}`);
+    ok('E2E', 'OHP: 2 sets', ohpCount === 2, `${ohpCount}`);
+    ok('E2E', `Total volume`, vol > 3000, `${vol} kg·reps`);
+    ok('E2E', 'PR weights are 42, 95, 105', JSON.stringify(e2ePRs.map(p => p.actualWeight).sort((a,b) => a-b)) === JSON.stringify([42,95,105]),
+      `[${e2ePRs.map(p => p.actualWeight).sort((a,b) => a-b)}]`);
+
+    // Clean up
+    await db.delete();
+
+  } catch (err) {
+    ok('RUNTIME', 'Unhandled error', false, err instanceof Error ? err.message : String(err));
+  }
+
+  // Render results
+  const passed = results.filter(r => r.pass).length;
+  const failed = results.filter(r => !r.pass).length;
+  const groups = [...new Set(results.map(r => r.group))];
+
+  const summary = document.getElementById('summary');
+  summary.className = failed === 0 ? 'pass' : 'fail';
+  summary.textContent = failed === 0
+    ? `🎉 ALL ${passed} TESTS PASSED`
+    : `⚠️  ${passed}/${passed + failed} passed, ${failed} failed`;
+
+  const output = document.getElementById('output');
+  for (const g of groups) {
+    const div = document.createElement('div');
+    div.className = 'group';
+    const h2 = document.createElement('h2');
+    const allPass = results.filter(r => r.group === g).every(r => r.pass);
+    h2.textContent = `${g} ${allPass ? '✅' : '❌'}`;
+    div.appendChild(h2);
+
+    for (const r of results.filter(r => r.group === g)) {
+      const row = document.createElement('div');
+      row.className = 'result ' + (r.pass ? 'pass' : 'fail');
+      row.innerHTML = `<span class="icon">${r.pass ? '✅' : '❌'}</span><div><span class="name">${r.name}</span><div class="detail ${r.pass ? '' : 'err'}">${r.detail}</div></div>`;
+      div.appendChild(row);
+    }
+    output.appendChild(div);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🔄 Re-run All Tests';
+}
+</script>
+</body>
+</html>
