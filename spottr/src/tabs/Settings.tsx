@@ -5,6 +5,7 @@ import GlassCard from '../components/common/GlassCard';
 import GlassButton from '../components/common/GlassButton';
 import EmptyState from '../components/common/EmptyState';
 import GradientText from '../components/common/GradientText';
+import StorageManagement from '../components/settings/StorageManagement';
 
 // ============================================================
 // Gym Management Sub-Screen
@@ -367,6 +368,9 @@ const SettingsTab: FC = () => {
           <span className="text-slate-400">→</span>
         </div>
       </GlassCard>
+
+      {/* Storage Management */}
+      <StorageManagement />
 
       {/* Danger Zone */}
       <GlassCard>

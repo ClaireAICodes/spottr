@@ -76,6 +76,10 @@ function MuscleGroupPicker({
 // Exercise Card
 // ============================================================
 
+import { useEffect } from 'react';
+
+// ... rest of imports ...
+
 function ExerciseCard({
   exercise,
   onEdit,
@@ -87,6 +91,15 @@ function ExerciseCard({
 }) {
   const media = useMediaForExercise(exercise.id);
   const firstMedia = media?.[0] as ExerciseMediaType | undefined;
+
+  // Clean up blob URL when component unmounts or when media changes
+  useEffect(() => {
+    return () => {
+      if (firstMedia) {
+        URL.revokeObjectURL(URL.createObjectURL(firstMedia.mediaBlob));
+      }
+    };
+  }, [firstMedia]);
 
   return (
     <GlassCard padded className="relative group" hover>
@@ -352,7 +365,7 @@ const ExerciseEditor: FC = () => {
 
         <MuscleGroupPicker selected={selectedGroups} onChange={setSelectedGroups} />
 
-        {/* Media — Phase 3 minimal: file picker storing raw blobs */}
+        {/* Media — Phase 4 enhanced: file picker with compression */}
         {editingId != null && <ExerciseMediaSection exerciseId={editingId} />}
 
         <div className="flex gap-3 pt-2">
@@ -376,23 +389,42 @@ const ExerciseEditor: FC = () => {
 // Exercise Media Section (Phase 3 minimal — raw blob storage)
 // ============================================================
 
+import { compressImage, compressVideo } from '../utils/mediaCompress';
+
+// ... rest of the file ...
+
 function ExerciseMediaSection({ exerciseId }: { exerciseId: number }) {
   const media = useMediaForExercise(exerciseId);
 
   const handleFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
+
     for (const file of Array.from(files)) {
-      const mediaType: 'image' | 'video' = file.type.startsWith('video')
-        ? 'video'
-        : 'image';
-      await db.exerciseMedia.add({
-        exerciseId,
-        mediaBlob: file,
-        mediaType,
-        sortOrder: (media?.length ?? 0) + 1,
-        createdAt: new Date(),
-      });
+      try {
+        const mediaType: 'image' | 'video' = file.type.startsWith('video')
+          ? 'video'
+          : 'image';
+        
+        // Phase 4: Apply compression
+        let blob: Blob;
+        if (mediaType === 'video') {
+          blob = await compressVideo(file, 720, 2_000_000, 50); // 720p, 2Mbps, 50MB limit
+        } else {
+          blob = await compressImage(file, 1920, 0.8, 5); // 1920px width, 80% quality, 5MB limit
+        }
+
+        await db.exerciseMedia.add({
+          exerciseId,
+          mediaBlob: blob,
+          mediaType,
+          sortOrder: (media?.length ?? 0) + 1,
+          createdAt: new Date(),
+        });
+      } catch (err) {
+        console.error('Failed to upload file:', file.name, err);
+        alert(`Failed to upload ${file.name}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
     }
     e.target.value = ''; // reset so the picker can trigger again for the same file
   };
