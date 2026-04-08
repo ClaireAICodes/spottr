@@ -1,0 +1,132 @@
+import { type FC } from 'react';
+import { useAppStore } from '../store/useAppStore';
+import { useSessions, useLastWorkout, useRecentPRs, useWorkoutsThisMonth, useTotalPRCount, useCurrentStreakWeeks } from '../db/useDb';
+import GlassCard from '../components/common/GlassCard';
+import GradientText from '../components/common/GradientText';
+import EmptyState from '../components/common/EmptyState';
+import { formatDistanceToNow } from 'date-fns';
+
+const HomeTab: FC = () => {
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const sessions = useSessions();
+  const lastWorkout = useLastWorkout();
+  const recentPRs = useRecentPRs(5);
+  const workoutsThisMonth = useWorkoutsThisMonth();
+  const totalPRs = useTotalPRCount();
+  const streakWeeks = useCurrentStreakWeeks();
+
+  const hasData = (sessions && sessions.length > 0) || (lastWorkout && lastWorkout.session);
+
+  return (
+    <div className="pb-24">
+      <GradientText as="h2" className="text-3xl mb-6">
+        Dashboard
+      </GradientText>
+
+      {/* Begin Workout CTA */}
+      <GlassCard
+        className="mb-6 hover-lift cursor-pointer text-center py-8"
+        accentBar="#38bdf8"
+        onClick={() => setActiveTab('workouts')}
+      >
+        <div className="text-3xl mb-2">💪</div>
+        <div className="text-lg font-semibold text-white">Begin Workout</div>
+        <div className="text-xs text-slate-400 mt-1">
+          Choose a workout template and start training
+        </div>
+      </GlassCard>
+
+      {!hasData ? (
+        <EmptyState
+          icon="🏋️"
+          title="No workouts yet"
+          description="Create your first workout template and start tracking your progress."
+          actionLabel="Browse Workouts"
+          onAction={() => setActiveTab('workouts')}
+        />
+      ) : (
+        <>
+          {/* Last Workout Card */}
+          <GlassCard className="mb-4" accentBar="#38bdf8">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+              Last Workout
+            </h3>
+            <div className="text-white font-semibold text-lg">
+              {lastWorkout?.workoutName ?? 'Workout'}
+            </div>
+            <div className="text-sm text-slate-400 mt-1">
+              {lastWorkout?.session?.startTime
+                ? formatDistanceToNow(new Date(lastSession.startTime), { addSuffix: true })
+                : 'Unknown date'}
+            </div>
+            <div className="flex gap-3 mt-3 text-xs text-slate-500">
+              {lastWorkout?.prCount !== undefined && (
+                <span>{lastWorkout.prCount} PR{lastWorkout.prCount !== 1 ? 's' : ''}</span>
+              )}
+              {lastWorkout?.totalVolume && (
+                <span>{lastWorkout.totalVolume.toLocaleString()} kg·reps</span>
+              )}
+            </div>
+          </GlassCard>
+
+          {/* Recent PRs Section */}
+          <GlassCard className="mb-4">
+            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+              🎉 Recent PRs
+            </h3>
+            {!recentPRs || recentPRs.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-4">
+                No PRs yet. Keep pushing!
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {recentPRs.slice(0, 4).map(({ log, exerciseName }) => (
+                  <div
+                    key={log.id}
+                    className="bg-white/5 rounded-xl p-3 text-center border border-accent/10"
+                  >
+                    <div className="text-xs text-slate-400 truncate">{exerciseName}</div>
+                    <div className="text-lg font-bold text-accent mt-1">
+                      {log.actualWeight} {log.actualWeightUnit}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      {log.actualReps} reps
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {recentPRs && recentPRs.length > 4 && (
+              <div className="text-center mt-2">
+                <button
+                  onClick={() => setActiveTab('history')}
+                  className="text-xs text-accent hover:text-accent/80"
+                >
+                  View all PRs →
+                </button>
+              </div>
+            )}
+          </GlassCard>
+
+          {/* Quick Stats Strip */}
+          <div className="flex gap-3">
+            <GlassCard padded className="flex-1 text-center" hover={false}>
+              <div className="text-2xl font-bold text-accent">{workoutsThisMonth ?? 0}</div>
+              <div className="text-xs text-slate-400 mt-1">Workouts This Month</div>
+            </GlassCard>
+            <GlassCard padded className="flex-1 text-center" hover={false}>
+              <div className="text-2xl font-bold text-emerald-400">{totalPRs ?? 0}</div>
+              <div className="text-xs text-slate-400 mt-1">Total PRs</div>
+            </GlassCard>
+            <GlassCard padded className="flex-1 text-center" hover={false}>
+              <div className="text-2xl font-bold text-amber-400">{streakWeeks ?? 0}w</div>
+              <div className="text-xs text-slate-400 mt-1">Current Streak</div>
+            </GlassCard>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+export default HomeTab;

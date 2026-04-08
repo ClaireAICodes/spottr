@@ -17,6 +17,7 @@
     "dexie-react-hooks": "^4.4.0",
     "esbuild": "^0.28.0",
     "jszip": "^3.10.1",
+    "lucide-react": "^1.7.0",
     "postcss": "^8.5.8",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

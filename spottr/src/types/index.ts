@@ -22,6 +22,8 @@ export interface ExerciseDefinition {
   id?: number;
   name: string;
   notes?: string;
+  /** Muscle groups for filtering: e.g., ['Chest', 'Shoulders'] */
+  muscleGroups?: string[];
   createdAt: Date;
 }
 

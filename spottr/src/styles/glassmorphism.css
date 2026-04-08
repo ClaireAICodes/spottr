@@ -126,3 +126,93 @@ body {
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
+
+/* ── Button Component Base ── */
+.btn-base {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: none;
+  outline: none;
+}
+
+.btn-base:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.btn-base:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* ── Button Variant: Primary ── */
+.bg-gradient-main-btn {
+  background: linear-gradient(135deg, var(--accent) 0%, #6366f1 100%);
+  color: white;
+}
+
+.bg-gradient-main-btn:hover:not(:disabled) {
+  box-shadow: 0 6px 24px rgba(56, 189, 248, 0.45);
+  transform: translateY(-2px);
+}
+
+.bg-gradient-main-btn:focus-visible {
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.5);
+}
+
+.shadow-glow-primary {
+  box-shadow: 0 4px 15px rgba(56, 189, 248, 0.3);
+}
+
+/* ── Hover Lift for Cards ── */
+.hover-lift {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.7);
+}
+
+/* ── Workouts Tab Pulse Glow ── */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 4px #38bdf8, 0 0 8px rgba(56, 189, 248, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 8px #38bdf8, 0 0 16px rgba(56, 189, 248, 0.35);
+  }
+}
+
+.tab-workouts-glow {
+  animation: glow-pulse 3s ease-in-out infinite;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 16px;
+}
+
+.tab-workouts-glow:hover {
+  animation: none;
+  border-color: rgba(56, 189, 248, 0.5);
+}
+
+/* ── Utility: Scrollbar (glassmorphism themed) ── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.25);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.4);
+}

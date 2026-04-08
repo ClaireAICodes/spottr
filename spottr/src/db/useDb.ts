@@ -376,3 +376,40 @@ export async function getCurrentStreakWeeks(): Promise<number> {
 
   return streak;
 }
+
+// ============================================================
+// React Hooks for Statistics (live queries)
+// ============================================================
+
+export function useWorkoutsThisMonth() {
+  return useLiveQuery(getWorkoutsThisMonth, []);
+}
+
+export function useTotalPRCount() {
+  return useLiveQuery(getTotalPRCount, []);
+}
+
+export function useCurrentStreakWeeks() {
+  return useLiveQuery(getCurrentStreakWeeks, []);
+}
+
+/** Last workout with enriched data (name, PR count, volume) */
+export function useLastWorkout() {
+  return useLiveQuery(async () => {
+    const sessions = await db.workoutSessions.orderBy('startTime').reverse().toArray();
+    if (sessions.length === 0) return undefined;
+
+    const lastSession = sessions[0];
+    const workout = await db.workouts.get(lastSession.workoutId);
+    const logs = await db.setLogs.where('workoutSessionId').equals(lastSession.id!).toArray();
+    const prCount = logs.filter(l => l.isPR).length;
+    const totalVolume = logs.reduce((sum, l) => sum + l.actualWeight * l.actualReps, 0);
+
+    return {
+      session: lastSession,
+      workoutName: workout?.name ?? 'Deleted Workout',
+      prCount,
+      totalVolume,
+    };
+  }, []);
+}
