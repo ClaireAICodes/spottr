@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Activity,
   BarChart3,
@@ -20,9 +20,25 @@ const tabs = [
   { label: 'Profile', icon: CircleUserRound },
 ] as const
 
+const compactNavQuery = '(max-width: 820px)'
+
 export function App() {
   const [activeTab, setActiveTab] = useState(0)
+  const [isCompactNav, setIsCompactNav] = useState(
+    () => typeof window.matchMedia === 'function' && window.matchMedia(compactNavQuery).matches,
+  )
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+
+  useEffect(() => {
+    if (!window.matchMedia) return
+
+    const query = window.matchMedia(compactNavQuery)
+    const updateOrientation = () => setIsCompactNav(query.matches)
+
+    updateOrientation()
+    query.addEventListener('change', updateOrientation)
+    return () => query.removeEventListener('change', updateOrientation)
+  }, [])
 
   function selectTab(index: number) {
     setActiveTab(index)
@@ -62,11 +78,11 @@ export function App() {
           <button className="avatar-button" aria-label="Open profile"><span aria-hidden="true">P</span></button>
         </header>
 
-        {activeTab === 0 ? <HomeFrames /> : <QuietPlaceholder title={current.label} />}
+        {activeTab === 0 ? <HomeFrames /> : <QuietPlaceholder title={current.label} labelledBy={`tab-${current.label.toLowerCase()}`} />}
       </main>
 
       <nav className="primary-nav" aria-label="Primary">
-        <div role="tablist" aria-label="Spottr sections" aria-orientation="vertical">
+        <div role="tablist" aria-label="Spottr sections" aria-orientation={isCompactNav ? 'horizontal' : 'vertical'}>
           {tabs.map(({ label, icon: Icon }, index) => (
             <button
               key={label}
@@ -129,9 +145,9 @@ function HomeFrames() {
   )
 }
 
-function QuietPlaceholder({ title }: { title: string }) {
+function QuietPlaceholder({ title, labelledBy }: { title: string; labelledBy: string }) {
   return (
-    <div id="main-view" role="tabpanel" className="quiet-placeholder">
+    <div id="main-view" role="tabpanel" aria-labelledby={labelledBy} className="quiet-placeholder">
       <p className="eyebrow">Shell preview</p>
       <h2>{title}</h2>
       <p>This destination is intentionally empty in Phase 1.</p>

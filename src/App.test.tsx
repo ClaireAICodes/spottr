@@ -33,6 +33,7 @@ describe('Spottr application shell', () => {
     expect(train).toHaveFocus()
     expect(train).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('heading', { level: 1, name: 'Train' })).toBeInTheDocument()
+    expect(screen.getByRole('tabpanel', { name: 'Train' })).toBeInTheDocument()
   })
 
   it('renders presentation-only empty and resume frames on Home', () => {
