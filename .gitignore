@@ -1,0 +1,9 @@
+node_modules/
+dist/
+evidence/playwright-results/
+test-results/
+playwright-report/
+*.log
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
