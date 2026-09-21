@@ -9,13 +9,13 @@
 
 ## Test-first evidence
 
-The first unit run failed because `src/App.tsx` did not exist. Implementation followed that red state. The final public-seam tests verify five named tabs, active-state semantics, arrow-key focus/selection behavior, and both Home frames.
+The first unit run failed because `src/App.tsx` did not exist. Implementation followed that red state. During review remediation, the new Train-tabpanel accessible-name assertion and 390px orientation assertion both failed before their implementation. The final public-seam tests verify five named tabs, active-state semantics, arrow-key focus/selection behavior, named Home and non-Home tabpanels, responsive orientation semantics, live viewport changes, and both Home frames.
 
 ## Final commands and outcomes
 
 ```text
-npm install
-# completed; package lock created; audit reported 0 vulnerabilities
+npm ci
+# reproducible lockfile install completed
 
 npm test
 # 1 test file passed; 3 tests passed
@@ -25,7 +25,12 @@ npm run build
 
 npm run screenshots
 # 2 Playwright tests passed
-# verified keyboard focus/selection at 390px and zero horizontal overflow at 1440px
+# verified keyboard focus/selection and horizontal orientation at 390px
+# verified live 390px → 821px → 390px orientation updates
+# verified vertical orientation and zero horizontal overflow at 1440px
+
+npm audit --audit-level=high
+# 0 vulnerabilities
 ```
 
 ## Keyboard and focus audit
@@ -35,6 +40,8 @@ npm run screenshots
 - Focus visibility: global 3px blue `:focus-visible` ring with 4px offset. The mobile evidence capture visibly shows the focused Home tab.
 - Target size: mobile tabs are at least 56×62 CSS px; avatar is at least 44×44; primary panel actions are at least 50px tall.
 - Active state is not color-only: `aria-selected=true`, position, outline, fill, and shadow distinguish it.
+- Every rendered tabpanel is named by its controlling tab through `aria-labelledby`.
+- Tablist orientation matches the layout: horizontal at 820px and below, vertical above 820px, including after live viewport changes.
 - Reduced motion: a `prefers-reduced-motion: reduce` rule suppresses transitions and animations.
 
 ## Responsive visual evidence
