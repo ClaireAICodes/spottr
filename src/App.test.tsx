@@ -302,6 +302,77 @@ describe('gym management journey', () => {
 })
 
 describe('exercise library journey', () => {
+  it('exerciseMedia_invalidFile_announcesAnActionableError', async () => {
+    const user = userEvent.setup({ applyAccept: false })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository(), {
+      prepareImage: async (file) => file,
+    })
+    await exerciseService.create({ name: 'Front Squat', muscleGroup: '', equipment: '', notes: '' })
+    render(<App exerciseService={exerciseService} />)
+    await user.click(screen.getByRole('tab', { name: /train/i }))
+    const exercise = await screen.findByRole('article', { name: 'Front Squat' })
+
+    await user.upload(
+      within(exercise).getByLabelText(/add image or video/i),
+      new File(['notes'], 'notes.txt', { type: 'text/plain' }),
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/choose an image or video/i)
+    expect(exercise).toBeInTheDocument()
+  })
+
+  it('exerciseMedia_partialBatchFailure_keepsSuccessfulMediaVisible', async () => {
+    const user = userEvent.setup({ applyAccept: false })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository(), {
+      prepareImage: async (file) => file,
+    })
+    await exerciseService.create({ name: 'Front Squat', muscleGroup: '', equipment: '', notes: '' })
+    render(<App exerciseService={exerciseService} />)
+    await user.click(screen.getByRole('tab', { name: /train/i }))
+    const exercise = await screen.findByRole('article', { name: 'Front Squat' })
+
+    await user.upload(within(exercise).getByLabelText(/add image or video/i), [
+      new File(['front'], 'front.png', { type: 'image/png' }),
+      new File(['notes'], 'notes.txt', { type: 'text/plain' }),
+      new File(['side'], 'side.mp4', { type: 'video/mp4' }),
+    ])
+
+    expect(await within(exercise).findByText('front.png')).toBeInTheDocument()
+    expect(await within(exercise).findByText('side.mp4')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent(/choose an image or video/i)
+  })
+
+  it('exerciseMedia_uploadReorderRemove_exposesTheOrderedMediaJourney', async () => {
+    const user = userEvent.setup()
+    const exerciseService = createExerciseService(createMemoryExerciseRepository(), {
+      prepareImage: async (file) => file,
+    })
+    await exerciseService.create({ name: 'Front Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: '' })
+    render(<App exerciseService={exerciseService} />)
+    await user.click(screen.getByRole('tab', { name: /train/i }))
+    const exercise = await screen.findByRole('article', { name: 'Front Squat' })
+
+    await user.upload(within(exercise).getByLabelText(/add image or video/i), [
+      new File(['front'], 'front.png', { type: 'image/png' }),
+      new File(['side'], 'side.mp4', { type: 'video/mp4' }),
+    ])
+
+    expect(await within(exercise).findByText('front.png')).toBeInTheDocument()
+    const side = await within(exercise).findByRole('listitem', { name: /side.mp4/i })
+    const moveUp = within(side).getByRole('button', { name: /move .* up/i })
+    await user.click(moveUp)
+    expect(moveUp).toHaveFocus()
+    expect(within(exercise).getAllByRole('listitem').map((item) => item.getAttribute('aria-label'))).toEqual([
+      expect.stringContaining('side.mp4'),
+      expect.stringContaining('front.png'),
+    ])
+    expect(within(exercise).getByLabelText(/preview side.mp4/i)).toHaveAttribute('controls')
+    await user.click(within(exercise).getByRole('button', { name: /remove side.mp4/i }))
+    expect(within(exercise).queryByText('side.mp4')).not.toBeInTheDocument()
+    await waitFor(() => expect(within(exercise).getByLabelText(/add image or video/i)).toHaveFocus())
+    expect(within(exercise).getByText(/25 MB total/i)).toBeInTheDocument()
+  })
+
   it('exerciseLibrary_createSearchEditReload_preservesTheSharedExercise', async () => {
     const user = userEvent.setup()
     const exerciseService = createExerciseService(createMemoryExerciseRepository())

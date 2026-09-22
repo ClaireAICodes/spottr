@@ -1,5 +1,12 @@
 import 'fake-indexeddb/auto'
-import { createExerciseService, createMemoryExerciseRepository } from './exercises'
+import {
+  EXERCISE_MEDIA_TOTAL_BYTES,
+  EXERCISE_IMAGE_SOURCE_MAX_BYTES,
+  EXERCISE_VIDEO_MAX_BYTES,
+  compressExerciseImage,
+  createExerciseService,
+  createMemoryExerciseRepository,
+} from './exercises'
 import { createIndexedDbExerciseRepository } from './exerciseRepository'
 
 describe('shared exercise library', () => {
@@ -57,6 +64,144 @@ describe('shared exercise library', () => {
       expect.objectContaining({ id: 'persistent-exercise', name: 'Cable Row' }),
     ])
     await reloadedRepository.close?.()
+    indexedDB.deleteDatabase(databaseName)
+  })
+
+  it('exerciseMedia_addReorderRemove_keepsAnExplicitOrder', async () => {
+    const service = createExerciseService(createMemoryExerciseRepository(), {
+      createId: (() => {
+        let value = 0
+        return () => `id-${++value}`
+      })(),
+      now: () => '2026-09-22T13:15:00.000Z',
+      prepareImage: async (file) => file,
+    })
+    const exercise = await service.create({ name: 'Deadlift', muscleGroup: 'Back', equipment: 'Barbell', notes: '' })
+    const image = await service.addMedia(exercise.id, new File(['image'], 'setup.png', { type: 'image/png' }))
+    const video = await service.addMedia(exercise.id, new File(['video'], 'rep.mp4', { type: 'video/mp4' }))
+
+    expect((await service.get(exercise.id))?.media.map((item) => item.id)).toEqual([image.id, video.id])
+    await service.moveMedia(exercise.id, video.id, 'up')
+    expect((await service.get(exercise.id))?.media.map((item) => item.id)).toEqual([video.id, image.id])
+    await service.removeMedia(exercise.id, video.id)
+    expect((await service.get(exercise.id))?.media.map((item) => item.id)).toEqual([image.id])
+  })
+
+  it('exerciseMedia_image_passesThroughCompressionBeforeStorage', async () => {
+    const compressed = new Blob(['small'], { type: 'image/jpeg' })
+    const prepareImage = vi.fn(async () => compressed)
+    const service = createExerciseService(createMemoryExerciseRepository(), {
+      createId: () => 'media-id',
+      prepareImage,
+    })
+    const exercise = await service.create({ name: 'Press', muscleGroup: '', equipment: '', notes: '' })
+
+    const media = await service.addMedia(exercise.id, new File(['original image'], 'form.png', { type: 'image/png' }))
+
+    expect(prepareImage).toHaveBeenCalledOnce()
+    expect(media).toMatchObject({ kind: 'image', mimeType: 'image/jpeg', size: compressed.size })
+    expect(media.blob).toBe(compressed)
+  })
+
+  it('exerciseMedia_capsVideoAndTotalStorageWithActionableErrors', async () => {
+    const repository = createMemoryExerciseRepository()
+    const service = createExerciseService(repository, { prepareImage: async (file) => file })
+    const exercise = await service.create({ name: 'Row', muscleGroup: '', equipment: '', notes: '' })
+
+    await expect(service.addMedia(exercise.id, new File(
+      [new Uint8Array(EXERCISE_VIDEO_MAX_BYTES + 1)],
+      'too-large.mp4',
+      { type: 'video/mp4' },
+    ))).rejects.toThrow(/video.*limit/i)
+
+    await repository.addMedia(exercise.id, {
+      id: 'existing',
+      kind: 'video',
+      name: 'existing.mp4',
+      mimeType: 'video/mp4',
+      size: EXERCISE_MEDIA_TOTAL_BYTES - 2,
+      blob: new Blob(['x'], { type: 'video/mp4' }),
+      createdAt: '2026-09-22T13:15:00.000Z',
+    }, EXERCISE_MEDIA_TOTAL_BYTES)
+    await expect(service.addMedia(
+      exercise.id,
+      new File(['more'], 'more.png', { type: 'image/png' }),
+    )).rejects.toThrow(/storage.*limit/i)
+    await expect(service.addMedia(
+      exercise.id,
+      new File(['text'], 'notes.txt', { type: 'text/plain' }),
+    )).rejects.toThrow(/image or video/i)
+  })
+
+  it('exerciseMedia_rejectsOversizedOrUnsafeImageDimensionsBeforeDecode', async () => {
+    await expect(compressExerciseImage(new File(
+      [new Uint8Array(EXERCISE_IMAGE_SOURCE_MAX_BYTES + 1)],
+      'huge.png',
+      { type: 'image/png' },
+    ))).rejects.toThrow(/10 MB source limit/i)
+
+    const unsafePngHeader = new Uint8Array(33)
+    unsafePngHeader.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    new DataView(unsafePngHeader.buffer).setUint32(8, 13)
+    unsafePngHeader.set([0x49, 0x48, 0x44, 0x52], 12)
+    new DataView(unsafePngHeader.buffer).setUint32(16, 10_000)
+    new DataView(unsafePngHeader.buffer).setUint32(20, 10_000)
+    new DataView(unsafePngHeader.buffer).setUint32(29, 0x3416e82b)
+    await expect(compressExerciseImage(new File(
+      [unsafePngHeader],
+      'unsafe.png',
+      { type: 'image/png' },
+    ))).rejects.toThrow(/checksum|20 megapixel safety limit/i)
+
+    const malformedPng = new Uint8Array(24)
+    malformedPng.set([0x89, 0x50, 0x4e, 0x47])
+    await expect(compressExerciseImage(new File(
+      [malformedPng],
+      'malformed.png',
+      { type: 'image/png' },
+    ))).rejects.toThrow(/PNG image is invalid/i)
+  })
+
+  it('exerciseMedia_reload_restoresBlobAndOrderFromIndexedDb', async () => {
+    const databaseName = `spottr-media-${crypto.randomUUID()}`
+    const firstRepository = createIndexedDbExerciseRepository(databaseName)
+    const firstService = createExerciseService(firstRepository, {
+      createId: (() => {
+        let value = 0
+        return () => `persistent-${++value}`
+      })(),
+      prepareImage: async (file) => file,
+    })
+    const exercise = await firstService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    await firstService.addMedia(exercise.id, new File(['first'], 'first.png', { type: 'image/png' }))
+    await firstService.addMedia(exercise.id, new File(['second'], 'second.mp4', { type: 'video/mp4' }))
+    await firstRepository.close?.()
+
+    const reloadedRepository = createIndexedDbExerciseRepository(databaseName)
+    const restored = await createExerciseService(reloadedRepository).get(exercise.id)
+    expect(restored?.media.map(({ name }) => name)).toEqual(['first.png', 'second.mp4'])
+    expect(restored?.media[0]).toMatchObject({ kind: 'image', size: 5 })
+    await reloadedRepository.close?.()
+    indexedDB.deleteDatabase(databaseName)
+  })
+
+  it('exerciseMedia_concurrentIndexedDbAdds_cannotExceedTheTotalCapOrLoseAWrite', async () => {
+    const databaseName = `spottr-media-concurrency-${crypto.randomUUID()}`
+    const repository = createIndexedDbExerciseRepository(databaseName)
+    const setup = createExerciseService(repository, { createId: () => 'exercise-id' })
+    const exercise = await setup.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    const first = createExerciseService(repository, { createId: () => 'first-media' })
+    const second = createExerciseService(repository, { createId: () => 'second-media' })
+    const video = () => new File([new Uint8Array(EXERCISE_VIDEO_MAX_BYTES)], 'rep.mp4', { type: 'video/mp4' })
+
+    const results = await Promise.allSettled([
+      first.addMedia(exercise.id, video()),
+      second.addMedia(exercise.id, video()),
+    ])
+
+    expect(results.map(({ status }) => status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect((await setup.get(exercise.id))?.media).toHaveLength(1)
+    await repository.close?.()
     indexedDB.deleteDatabase(databaseName)
   })
 })

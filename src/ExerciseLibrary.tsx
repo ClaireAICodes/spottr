@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Dumbbell, Pencil, Plus, Search } from 'lucide-react'
-import type { FormEvent } from 'react'
-import type { Exercise, ExerciseService } from './exercises'
+import { ArrowDown, ArrowUp, Dumbbell, ImagePlus, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import type { ChangeEvent, FormEvent } from 'react'
+import type { Exercise, ExerciseMedia, ExerciseService } from './exercises'
 import { ActionButton, Panel } from './primitives'
 
 type EditorState = {
@@ -19,9 +19,12 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [mediaBusyId, setMediaBusyId] = useState<string | null>(null)
+  const [mediaAnnouncement, setMediaAnnouncement] = useState('')
   const loadRequest = useRef(0)
   const saveInFlight = useRef(false)
   const queryRef = useRef(query)
+  const mediaPickerRefs = useRef(new Map<string, HTMLInputElement>())
 
   async function load(searchQuery = queryRef.current) {
     const requestId = ++loadRequest.current
@@ -79,6 +82,49 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
     }
   }
 
+  async function addMedia(exercise: Exercise, event: ChangeEvent<HTMLInputElement>) {
+    const files = [...(event.target.files ?? [])]
+    event.target.value = ''
+    if (files.length === 0 || mediaBusyId) return
+    setMediaBusyId(exercise.id)
+    setError('')
+    const failures: string[] = []
+    for (const file of files) {
+      try {
+        const media = await service.addMedia(exercise.id, file)
+        setExercises((current) => current.map((item) => item.id === exercise.id
+          ? { ...item, media: [...item.media, media] }
+          : item))
+        setMediaAnnouncement(`${file.name} added to ${exercise.name}`)
+      } catch (caught) {
+        failures.push(`${file.name}: ${caught instanceof Error ? caught.message : 'could not be added'}`)
+      }
+    }
+    if (failures.length) setError(failures.join(' '))
+    setMediaBusyId(null)
+  }
+
+  async function changeMedia(exerciseId: string, mediaId: string, action: 'up' | 'down' | 'remove') {
+    if (mediaBusyId) return
+    setMediaBusyId(exerciseId)
+    setError('')
+    try {
+      const updated = action === 'remove'
+        ? await service.removeMedia(exerciseId, mediaId)
+        : await service.moveMedia(exerciseId, mediaId, action)
+      setExercises((current) => current.map((item) => item.id === exerciseId ? updated : item))
+      const changed = updated.media.find(({ id }) => id === mediaId)
+      setMediaAnnouncement(action === 'remove'
+        ? 'Media removed'
+        : `${changed?.name ?? 'Media'} moved ${action}`)
+      if (action === 'remove') setTimeout(() => mediaPickerRefs.current.get(exerciseId)?.focus(), 0)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The media order could not be changed.')
+    } finally {
+      setMediaBusyId(null)
+    }
+  }
+
   return (
     <section id="main-view" role="tabpanel" aria-labelledby="tab-train" className="exercise-library">
       <div className="section-heading exercise-heading">
@@ -96,6 +142,8 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
         <span>Search exercises</span>
         <span className="search-control"><Search size={18} aria-hidden="true" /><input type="search" value={query} onChange={(event) => { queryRef.current = event.target.value; setQuery(event.target.value) }} placeholder="Name, muscle, equipment, or notes" /></span>
       </label>
+      {status === 'ready' && error && !editor && <p role="alert" className="form-message error-copy">{error}</p>}
+      <p className="visually-hidden" aria-live="polite">{mediaAnnouncement}</p>
 
       {status === 'loading' && <p role="status" className="state-message">Loading exercises…</p>}
       {status === 'error' && <div role="alert" className="state-message error-state"><p>{error}</p><button type="button" className="text-button" onClick={() => void load(query)}>Try again</button></div>}
@@ -112,12 +160,39 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
         <div className="exercise-list" aria-label="Exercise library">
           {exercises.map((exercise) => (
             <article key={exercise.id} className="exercise-card" aria-label={exercise.name}>
-              <div>
-                <p className="exercise-meta">{[exercise.muscleGroup, exercise.equipment].filter(Boolean).join(' · ') || 'Uncategorised'}</p>
-                <h3>{exercise.name}</h3>
-                {exercise.notes && <p>{exercise.notes}</p>}
+              <div className="exercise-card-heading">
+                <div>
+                  <p className="exercise-meta">{[exercise.muscleGroup, exercise.equipment].filter(Boolean).join(' · ') || 'Uncategorised'}</p>
+                  <h3>{exercise.name}</h3>
+                  {exercise.notes && <p>{exercise.notes}</p>}
+                </div>
+                <button type="button" aria-label={`Edit ${exercise.name}`} onClick={() => openEditor(exercise)} disabled={isSaving || Boolean(mediaBusyId)}><Pencil size={16} aria-hidden="true" /> Edit</button>
               </div>
-              <button type="button" aria-label={`Edit ${exercise.name}`} onClick={() => openEditor(exercise)} disabled={isSaving}><Pencil size={16} aria-hidden="true" /> Edit</button>
+              <div className="exercise-media-manager">
+                <div className="media-policy">
+                  <strong>Form media</strong>
+                  <span>Images compressed · videos up to 15 MB · 25 MB total</span>
+                </div>
+                {exercise.media.length > 0 && (
+                  <ol className="media-list" aria-label={`Media for ${exercise.name}`}>
+                    {exercise.media.map((media, index) => (
+                      <li key={media.id} aria-label={`${index + 1}. ${media.name}`}>
+                        <MediaPreview media={media} />
+                        <div className="media-details"><strong>{media.name}</strong><span>{media.kind} · {formatBytes(media.size)}</span></div>
+                        <div className="media-actions">
+                          <button type="button" aria-label={`Move ${media.name} up`} disabled={index === 0 || Boolean(mediaBusyId)} onClick={() => void changeMedia(exercise.id, media.id, 'up')}><ArrowUp size={16} aria-hidden="true" /></button>
+                          <button type="button" aria-label={`Move ${media.name} down`} disabled={index === exercise.media.length - 1 || Boolean(mediaBusyId)} onClick={() => void changeMedia(exercise.id, media.id, 'down')}><ArrowDown size={16} aria-hidden="true" /></button>
+                          <button type="button" aria-label={`Remove ${media.name}`} disabled={Boolean(mediaBusyId)} onClick={() => void changeMedia(exercise.id, media.id, 'remove')}><Trash2 size={16} aria-hidden="true" /></button>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                <label className={`media-picker${mediaBusyId === exercise.id ? ' busy' : ''}`}>
+                  <ImagePlus size={18} aria-hidden="true" /> {mediaBusyId === exercise.id ? 'Saving media…' : 'Add image or video'}
+                  <input ref={(node) => { if (node) mediaPickerRefs.current.set(exercise.id, node); else mediaPickerRefs.current.delete(exercise.id) }} type="file" accept="image/jpeg,image/png,video/*" multiple disabled={Boolean(mediaBusyId)} onChange={(event) => void addMedia(exercise, event)} />
+                </label>
+              </div>
             </article>
           ))}
         </div>
@@ -143,4 +218,25 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
       )}
     </section>
   )
+}
+
+function MediaPreview({ media }: { media: ExerciseMedia }) {
+  const [source, setSource] = useState('')
+  useEffect(() => {
+    if (typeof URL.createObjectURL !== 'function') return
+    const url = URL.createObjectURL(media.blob)
+    setSource(url)
+    return () => URL.revokeObjectURL(url)
+  }, [media.blob])
+
+  if (!source) return <span className="media-placeholder" aria-hidden="true"><ImagePlus size={20} /></span>
+  return media.kind === 'image'
+    ? <img className="media-preview" src={source} alt="" />
+    : <video className="media-preview" src={source} aria-label={`Preview ${media.name}`} controls muted preload="metadata" />
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
