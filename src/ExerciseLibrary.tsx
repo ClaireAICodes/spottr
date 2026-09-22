@@ -151,7 +151,7 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
         <Panel className="exercise-empty">
           <Dumbbell size={30} aria-hidden="true" />
           <h3>{query ? 'No matching exercises' : 'No exercises yet'}</h3>
-          <p>{query ? 'Try another search or clear the search field.' : 'Add your first shared exercise. Media can be connected in a later phase.'}</p>
+          <p>{query ? 'Try another search or clear the search field.' : 'Add your first shared exercise, then attach ordered form images or videos.'}</p>
           {!query && <ActionButton type="button" onClick={() => openEditor(null)}>Add your first exercise</ActionButton>}
         </Panel>
       )}

@@ -1,6 +1,6 @@
 # Spottr W39 — Local-first training foundation
 
-A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profiles 2A–2D, and the shared exercise library 3A–3D:
+A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profiles 2A–2D, the shared exercise library 3A–3D, and ordered exercise media 4A–4D:
 
 - Vite + React + TypeScript scaffold and Vitest/Playwright harness
 - original design tokens and reusable panel/action/status primitives
@@ -10,6 +10,7 @@ A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profi
 - optional current-location capture with a manual-address fallback
 - selected-gym context exposed at the future workout-entry seam
 - IndexedDB-backed shared exercise create, search, edit, and reload
+- ordered local exercise images/videos with image compression and bounded storage
 - offline reload support for previously loaded local app resources and exercise data
 - responsive layouts verified at 390×844 and 1440×900
 
@@ -28,7 +29,7 @@ Focus a primary tab, then use Left/Right or Up/Down to move. Home/End jump to th
 
 ## Scope boundary
 
-This checkpoint intentionally stops at a searchable shared exercise library. It contains no exercise media, workout templates, active-session behavior, release, push, or deployment. The selected gym and exercise library remain separate foundations for a later scheduled template phase.
+This checkpoint intentionally stops at a searchable shared exercise library with ordered local media. It contains no workout templates, active-session behavior, release, push, or deployment. The selected gym and exercise library remain separate foundations for a later scheduled template phase.
 
 ## Evidence
 
@@ -38,5 +39,6 @@ This checkpoint intentionally stops at a searchable shared exercise library. It 
 - `evidence/screenshots/spottr-exercises-390x844.png`
 - `evidence/gym-verification.md`
 - `evidence/exercise-library-verification.md`
+- `evidence/exercise-media-verification.md`
 - `evidence/no-w38-reuse-proof.md`
 - `evidence/verification.md`

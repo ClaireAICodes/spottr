@@ -15,14 +15,14 @@ The domain tests were added before implementation and failed because the media s
 
 ```text
 npm test
-# 3 files passed; 30 tests passed
+# 3 files passed; 31 tests passed
 
 npm run build
 # TypeScript and Vite production build passed; 1,885 modules transformed
 
 npx playwright test
 # 5 tests passed
-# Chromium verified add, image compression to JPEG, reorder, reload, remove, and real IndexedDB persistence
+# Chromium verified add, 2000×1000 image compression to a 1600×800 JPEG, reorder, reload, remove, and real IndexedDB persistence
 # 390x844 media screen had zero horizontal overflow
 
 git diff --check
@@ -32,8 +32,9 @@ git diff --check
 ## Automated policy and failure coverage
 
 - Image preparation is invoked before persistence and its compressed Blob is stored.
-- Oversized source files and unsafe decoded dimensions are rejected before image decode.
-- A compressed image that still exceeds 2 MB is rejected.
+- A 2000×1000 browser-generated source is stored and rendered as a 1600×800 JPEG, independently verifying the longest-edge bound through the user-facing seam.
+- Oversized source files and a valid-checksum 10000×10000 PNG header are rejected before image decode; the latter specifically reaches the 20 megapixel guard.
+- A prepared image that still exceeds 2 MB is rejected and the exercise remains without media.
 - Videos over 15 MB are rejected before persistence.
 - Adding media beyond the 25 MB library-wide cap is rejected.
 - Unsupported file types are rejected with an image/video instruction and announced in the UI.

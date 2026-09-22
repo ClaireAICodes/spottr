@@ -54,13 +54,30 @@ test('adds, reorders, reloads, and removes ordered exercise media on mobile', as
   const exercise = page.getByRole('article', { name: 'Front Squat' })
   const picker = exercise.getByLabel('Add image or video')
 
-  await picker.setInputFiles({
-    name: 'front.png',
-    mimeType: 'image/png',
-    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+  await picker.evaluate(async (input: HTMLInputElement) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 2000
+    canvas.height = 1000
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Canvas is unavailable')
+    context.fillStyle = '#7c3aed'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    const source = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+      (blob) => blob ? resolve(blob) : reject(new Error('PNG creation failed')),
+      'image/png',
+    ))
+    const transfer = new DataTransfer()
+    transfer.items.add(new File([source], 'front.png', { type: 'image/png' }))
+    input.files = transfer.files
+    input.dispatchEvent(new Event('change', { bubbles: true }))
   })
-  await expect(exercise.locator('img.media-preview')).toBeVisible()
-  expect(await exercise.locator('img.media-preview').evaluate(async (image) => (
+  const storedImage = exercise.locator('img.media-preview')
+  await expect(storedImage).toBeVisible()
+  await expect.poll(() => storedImage.evaluate((image: HTMLImageElement) => ({
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+  }))).toEqual({ width: 1600, height: 800 })
+  expect(await storedImage.evaluate(async (image) => (
     await (await fetch((image as HTMLImageElement).src)).blob()
   ).type)).toBe('image/jpeg')
   await picker.setInputFiles({ name: 'side.mp4', mimeType: 'video/mp4', buffer: Buffer.from('video') })

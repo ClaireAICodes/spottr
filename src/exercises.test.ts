@@ -103,6 +103,24 @@ describe('shared exercise library', () => {
     expect(media.blob).toBe(compressed)
   })
 
+  it('exerciseMedia_rejectsPreparedImageOverTwoMegabytesWithoutPersisting', async () => {
+    const prepared = new Blob(
+      [new Uint8Array((2 * 1024 * 1024) + 1)],
+      { type: 'image/jpeg' },
+    )
+    const repository = createMemoryExerciseRepository()
+    const service = createExerciseService(repository, {
+      prepareImage: async () => prepared,
+    })
+    const exercise = await service.create({ name: 'Press', muscleGroup: '', equipment: '', notes: '' })
+
+    await expect(service.addMedia(
+      exercise.id,
+      new File(['source'], 'form.png', { type: 'image/png' }),
+    )).rejects.toThrow(/2 MB image limit/i)
+    await expect(service.get(exercise.id)).resolves.toMatchObject({ media: [] })
+  })
+
   it('exerciseMedia_capsVideoAndTotalStorageWithActionableErrors', async () => {
     const repository = createMemoryExerciseRepository()
     const service = createExerciseService(repository, { prepareImage: async (file) => file })
@@ -146,12 +164,12 @@ describe('shared exercise library', () => {
     unsafePngHeader.set([0x49, 0x48, 0x44, 0x52], 12)
     new DataView(unsafePngHeader.buffer).setUint32(16, 10_000)
     new DataView(unsafePngHeader.buffer).setUint32(20, 10_000)
-    new DataView(unsafePngHeader.buffer).setUint32(29, 0x3416e82b)
+    new DataView(unsafePngHeader.buffer).setUint32(29, 0xaf55763a)
     await expect(compressExerciseImage(new File(
       [unsafePngHeader],
       'unsafe.png',
       { type: 'image/png' },
-    ))).rejects.toThrow(/checksum|20 megapixel safety limit/i)
+    ))).rejects.toThrow(/20 megapixel safety limit/i)
 
     const malformedPng = new Uint8Array(24)
     malformedPng.set([0x89, 0x50, 0x4e, 0x47])
