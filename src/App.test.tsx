@@ -1,6 +1,7 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from './App'
+import { createExerciseService, createMemoryExerciseRepository } from './exercises'
 import { createGymService, createMemoryGymRepository } from './gyms'
 
 describe('Spottr application shell', () => {
@@ -297,5 +298,65 @@ describe('gym management journey', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /delete keep me/i })).toHaveFocus()
     expect(screen.getByRole('article', { name: 'Keep Me' })).toBeInTheDocument()
+  })
+})
+
+describe('exercise library journey', () => {
+  it('exerciseLibrary_createSearchEditReload_preservesTheSharedExercise', async () => {
+    const user = userEvent.setup()
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const firstRender = render(<App exerciseService={exerciseService} />)
+
+    await user.click(screen.getByRole('tab', { name: /train/i }))
+    await user.click(await screen.findByRole('button', { name: /add exercise/i }))
+    await user.type(screen.getByLabelText(/exercise name/i), 'Goblet Squat')
+    await user.type(screen.getByLabelText(/muscle group/i), 'Legs')
+    await user.type(screen.getByLabelText(/equipment/i), 'Kettlebell')
+    await user.type(screen.getByLabelText(/notes/i), 'Keep torso tall')
+    await user.click(screen.getByRole('button', { name: /save exercise/i }))
+
+    expect(await screen.findByRole('article', { name: 'Goblet Squat' })).toBeInTheDocument()
+    await user.type(screen.getByRole('searchbox', { name: /search exercises/i }), 'kettle')
+    const result = screen.getByRole('article', { name: 'Goblet Squat' })
+    await user.click(within(result).getByRole('button', { name: /edit/i }))
+    const name = screen.getByLabelText(/exercise name/i)
+    await user.clear(name)
+    await user.type(name, 'Double Kettlebell Squat')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    expect(await screen.findByRole('article', { name: 'Double Kettlebell Squat' })).toBeInTheDocument()
+
+    firstRender.unmount()
+    render(<App exerciseService={exerciseService} />)
+    await user.click(screen.getByRole('tab', { name: /train/i }))
+    expect(await screen.findByRole('article', { name: 'Double Kettlebell Squat' })).toBeInTheDocument()
+  })
+
+  it('exerciseLibrary_searchChangedDuringSave_keepsResultsAlignedWithVisibleQuery', async () => {
+    const user = userEvent.setup()
+    const baseService = createExerciseService(createMemoryExerciseRepository())
+    await baseService.create({ name: 'Goblet Squat', muscleGroup: 'Legs', equipment: 'Kettlebell', notes: '' })
+    let releaseUpdate: () => void = () => undefined
+    const waitForUpdate = new Promise<void>((resolve) => { releaseUpdate = resolve })
+    const service = {
+      ...baseService,
+      async update(id: string, draft: Parameters<typeof baseService.update>[1]) {
+        await waitForUpdate
+        return baseService.update(id, draft)
+      },
+    }
+    render(<App exerciseService={service} />)
+    await user.click(screen.getByRole('tab', { name: /train/i }))
+    const exercise = await screen.findByRole('article', { name: 'Goblet Squat' })
+    await user.click(within(exercise).getByRole('button', { name: /edit/i }))
+    const name = screen.getByLabelText(/exercise name/i)
+    await user.clear(name)
+    await user.type(name, 'Double Kettlebell Squat')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await user.type(screen.getByRole('searchbox', { name: /search exercises/i }), 'no-match')
+    await waitFor(() => expect(screen.queryByRole('article')).not.toBeInTheDocument())
+
+    releaseUpdate()
+    await act(async () => { await waitForUpdate })
+    expect(screen.queryByRole('article')).not.toBeInTheDocument()
   })
 })

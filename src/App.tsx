@@ -11,7 +11,10 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { ActionButton, Panel, StatusPill } from './primitives'
+import { ExerciseLibrary } from './ExerciseLibrary'
 import { GymManager } from './GymManager'
+import { createIndexedDbExerciseRepository } from './exerciseRepository'
+import { createExerciseService, type ExerciseService } from './exercises'
 import { createIndexedDbGymRepository } from './gymRepository'
 import { createGymService, type Gym, type GymService } from './gyms'
 
@@ -25,8 +28,15 @@ const tabs = [
 
 const compactNavQuery = '(max-width: 820px)'
 const defaultGymService = createGymService(createIndexedDbGymRepository())
+const defaultExerciseService = createExerciseService(createIndexedDbExerciseRepository())
 
-export function App({ gymService = defaultGymService }: { gymService?: GymService }) {
+export function App({
+  gymService = defaultGymService,
+  exerciseService = defaultExerciseService,
+}: {
+  gymService?: GymService
+  exerciseService?: ExerciseService
+}) {
   const [activeTab, setActiveTab] = useState(0)
   const [isManagingGyms, setIsManagingGyms] = useState(false)
   const [selectedGym, setSelectedGym] = useState<Gym | null>(null)
@@ -120,6 +130,8 @@ export function App({ gymService = defaultGymService }: { gymService?: GymServic
             onManageGyms={() => setIsManagingGyms(true)}
             onRetry={loadSelectedGym}
           />
+        ) : activeTab === 1 ? (
+          <ExerciseLibrary service={exerciseService} />
         ) : (
           <QuietPlaceholder title={current.label} labelledBy={`tab-${current.label.toLowerCase()}`} />
         )}
