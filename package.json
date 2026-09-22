@@ -26,6 +26,7 @@
     "@testing-library/user-event": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^26.1.0",
     "vitest": "latest"
   }

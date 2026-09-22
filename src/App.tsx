@@ -11,6 +11,9 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { ActionButton, Panel, StatusPill } from './primitives'
+import { GymManager } from './GymManager'
+import { createIndexedDbGymRepository } from './gymRepository'
+import { createGymService, type Gym, type GymService } from './gyms'
 
 const tabs = [
   { label: 'Home', icon: Home },
@@ -21,9 +24,14 @@ const tabs = [
 ] as const
 
 const compactNavQuery = '(max-width: 820px)'
+const defaultGymService = createGymService(createIndexedDbGymRepository())
 
-export function App() {
+export function App({ gymService = defaultGymService }: { gymService?: GymService }) {
   const [activeTab, setActiveTab] = useState(0)
+  const [isManagingGyms, setIsManagingGyms] = useState(false)
+  const [selectedGym, setSelectedGym] = useState<Gym | null>(null)
+  const [gymStatus, setGymStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const selectedGymRequest = useRef(0)
   const [isCompactNav, setIsCompactNav] = useState(
     () => typeof window.matchMedia === 'function' && window.matchMedia(compactNavQuery).matches,
   )
@@ -40,8 +48,28 @@ export function App() {
     return () => query.removeEventListener('change', updateOrientation)
   }, [])
 
+  function loadSelectedGym() {
+    const requestId = ++selectedGymRequest.current
+    setGymStatus('loading')
+    gymService.getSelected().then((gym) => {
+      if (requestId !== selectedGymRequest.current) return
+      setSelectedGym(gym)
+      setGymStatus('ready')
+    }).catch(() => {
+      if (requestId !== selectedGymRequest.current) return
+      setSelectedGym(null)
+      setGymStatus('error')
+    })
+  }
+
+  useEffect(() => {
+    loadSelectedGym()
+    return () => { selectedGymRequest.current += 1 }
+  }, [gymService])
+
   function selectTab(index: number) {
     setActiveTab(index)
+    setIsManagingGyms(false)
     tabRefs.current[index]?.focus()
   }
 
@@ -58,6 +86,7 @@ export function App() {
   }
 
   const current = tabs[activeTab]
+  const pageTitle = isManagingGyms ? 'Gyms' : current.label
 
   return (
     <div className="app-shell">
@@ -73,12 +102,27 @@ export function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">Monday · September 21</p>
-            <h1>{current.label}</h1>
+            <h1>{pageTitle}</h1>
           </div>
           <button className="avatar-button" aria-label="Open profile"><span aria-hidden="true">P</span></button>
         </header>
 
-        {activeTab === 0 ? <HomeFrames /> : <QuietPlaceholder title={current.label} labelledBy={`tab-${current.label.toLowerCase()}`} />}
+        {activeTab === 0 && isManagingGyms ? (
+          <GymManager
+            service={gymService}
+            onClose={() => setIsManagingGyms(false)}
+            onSelectionChange={loadSelectedGym}
+          />
+        ) : activeTab === 0 ? (
+          <HomeFrames
+            selectedGym={selectedGym}
+            gymStatus={gymStatus}
+            onManageGyms={() => setIsManagingGyms(true)}
+            onRetry={loadSelectedGym}
+          />
+        ) : (
+          <QuietPlaceholder title={current.label} labelledBy={`tab-${current.label.toLowerCase()}`} />
+        )}
       </main>
 
       <nav className="primary-nav" aria-label="Primary">
@@ -106,18 +150,40 @@ export function App() {
   )
 }
 
-function HomeFrames() {
+function HomeFrames({
+  selectedGym,
+  gymStatus,
+  onManageGyms,
+  onRetry,
+}: {
+  selectedGym: Gym | null
+  gymStatus: 'loading' | 'ready' | 'error'
+  onManageGyms: () => void
+  onRetry: () => void
+}) {
   return (
     <div id="main-view" role="tabpanel" aria-labelledby="tab-home" className="home-grid">
       <Panel className="welcome-panel" aria-labelledby="welcome-title">
         <div className="orb" aria-hidden="true"><Sparkles size={24} /></div>
         <StatusPill>Fresh start</StatusPill>
         <h2 id="welcome-title">Ready when you are.</h2>
-        <p>Nothing is scheduled. Start a free session when it feels right.</p>
+        {gymStatus === 'loading' ? (
+          <p role="status">Loading your training place…</p>
+        ) : gymStatus === 'error' ? (
+          <div role="alert">
+            <p>Your gym context could not be loaded.</p>
+            <button type="button" className="text-button" onClick={onRetry}>Try again</button>
+          </div>
+        ) : selectedGym ? (
+          <p>Work out at <strong>{selectedGym.name}</strong>. Future workout choices will stay scoped to this gym.</p>
+        ) : (
+          <p>Add a gym before starting so your future routines match the equipment around you.</p>
+        )}
         <ActionButton disabled aria-describedby="preview-note">
-          <Play size={18} fill="currentColor" aria-hidden="true" /> Start a workout
+          <Play size={18} fill="currentColor" aria-hidden="true" /> {selectedGym ? `Start workout at ${selectedGym.name}` : 'Choose a gym to start'}
         </ActionButton>
-        <small id="preview-note">Preview only · workout behavior arrives later</small>
+        <button type="button" className="manage-gyms-button" onClick={onManageGyms}>Manage gyms</button>
+        <small id="preview-note">Preview only · workout templates arrive later</small>
       </Panel>
 
       <Panel className="resume-panel" aria-labelledby="resume-title">
