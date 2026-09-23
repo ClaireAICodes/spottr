@@ -48,6 +48,10 @@ export function createGymService(repository: GymRepository, options: GymServiceO
       return repository.list()
     },
 
+    async get(id: string) {
+      return repository.get(id)
+    },
+
     async create(draft: GymDraft) {
       const normalized = normalize(draft)
       const timestamp = now()

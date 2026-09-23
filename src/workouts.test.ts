@@ -77,6 +77,19 @@ describe('workout template service', () => {
       ...mixedDraft,
       exercises: [{ exerciseId: 'squat', sets: [{ kind: 'working', weight: -1, reps: 0 }] }],
     })).rejects.toThrow(/weight.*zero|reps.*positive/i)
+    await expect(service.update(created.id, {
+      ...mixedDraft,
+      exercises: [{ exerciseId: 'squat', sets: [{ kind: 'invalid' as 'working', weight: 1, reps: 1 }] }],
+    })).rejects.toThrow(/set type/i)
+  })
+
+  it('rejects a write when its gym no longer exists', async () => {
+    const service = createWorkoutService(createMemoryWorkoutRepository(), {
+      gymExists: async () => false,
+    })
+
+    await expect(service.create(mixedDraft)).rejects.toThrow(/gym.*not found/i)
+    expect(await service.list()).toHaveLength(0)
   })
 
   it('replaces temporary nested identities with unique domain identities across reload edits', async () => {

@@ -262,14 +262,14 @@ describe('gym management journey', () => {
         return baseService.remove(id)
       },
     }
-    render(<App gymService={service} />)
+    render(<App gymService={service} workoutService={createWorkoutService(createMemoryWorkoutRepository())} />)
     await user.click(await screen.findByRole('button', { name: /manage gyms/i }))
     await user.click(screen.getByRole('button', { name: /delete pending/i }))
     const confirm = screen.getByRole('button', { name: /delete gym/i })
     await user.click(confirm)
     fireEvent.click(confirm)
     await user.keyboard('{Escape}')
-    expect(removeCalls).toBe(1)
+    await waitFor(() => expect(removeCalls).toBe(1))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /keep gym/i })).toBeDisabled()
     releaseRemove()
@@ -434,6 +434,106 @@ describe('exercise library journey', () => {
 })
 
 describe('workout template journey', () => {
+  it('searches shared exercises and deletes only the chosen template', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Back Squat', muscleGroup: '', equipment: '', notes: '' })
+    await exerciseService.create({ name: 'Cable Row', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const original = await workoutService.create({ name: 'Original', gymId: gym.id, exercises: [{ exerciseId: squat.id, sets: [{ kind: 'working', weight: 40, reps: 8 }] }] })
+    const copy = await workoutService.duplicate(original.id, gym.id)
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
+    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('button', { name: /add workout/i }))
+    await user.type(screen.getByRole('searchbox', { name: /search shared exercises/i }), 'row')
+    expect(screen.getByRole('button', { name: /add cable row/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /add back squat/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /cancel/i }))
+
+    const originalCard = screen.getByRole('article', { name: 'Original' })
+    const deleteTrigger = within(originalCard).getByRole('button', { name: /delete/i })
+    await user.click(deleteTrigger)
+    const dialog = screen.getByRole('dialog', { name: /delete original/i })
+    const keep = within(dialog).getByRole('button', { name: /keep workout/i })
+    const confirmDelete = within(dialog).getByRole('button', { name: /delete workout/i })
+    expect(keep).toHaveFocus()
+    await user.keyboard('{Tab}')
+    expect(confirmDelete).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(deleteTrigger).toHaveFocus()
+
+    await user.click(deleteTrigger)
+    await user.click(within(screen.getByRole('dialog', { name: /delete original/i })).getByRole('button', { name: /delete workout/i }))
+
+    expect(screen.queryByRole('article', { name: 'Original' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /add workout/i })).toHaveFocus()
+    expect(screen.getByRole('article', { name: 'Original copy' })).toBeInTheDocument()
+    expect(await workoutService.get(copy.id)).not.toBeNull()
+    expect(await exerciseService.get(squat.id)).not.toBeNull()
+  })
+
+  it('prevents deleting a gym while a workout still references it', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'Referenced Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const exercise = await exerciseService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    await workoutService.create({ name: 'Keep link', gymId: gym.id, exercises: [{ exerciseId: exercise.id, sets: [{ kind: 'working', weight: 40, reps: 8 }] }] })
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
+
+    await user.click(await screen.findByRole('button', { name: /manage gyms/i }))
+    await user.click(screen.getByRole('button', { name: /delete referenced gym/i }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /delete gym/i }))
+
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent(/could not be deleted/i)
+    expect(await gymService.getSelected()).toMatchObject({ id: gym.id })
+    expect(await workoutService.list(gym.id)).toHaveLength(1)
+  })
+
+  it('serializes gym deletion against a concurrent workout write', async () => {
+    const user = userEvent.setup()
+    const baseGymService = createGymService(createMemoryGymRepository())
+    const gym = await baseGymService.create({ name: 'Soon deleted', address: '' })
+    let removeStarted = false
+    let releaseRemove: () => void = () => undefined
+    const removeGate = new Promise<void>((resolve) => { releaseRemove = resolve })
+    const gymService = {
+      ...baseGymService,
+      async remove(id: string) {
+        removeStarted = true
+        await removeGate
+        await baseGymService.remove(id)
+      },
+    }
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository(), {
+      gymExists: async (id) => Boolean(await baseGymService.get(id)),
+    })
+    render(<App gymService={gymService} workoutService={workoutService} />)
+
+    await user.click(await screen.findByRole('button', { name: /manage gyms/i }))
+    await user.click(screen.getByRole('button', { name: /delete soon deleted/i }))
+    await user.click(screen.getByRole('button', { name: /delete gym/i }))
+    await waitFor(() => expect(removeStarted).toBe(true))
+
+    let writeSettled = false
+    const writeOutcome = workoutService.create({
+      name: 'Stale tab workout',
+      gymId: gym.id,
+      exercises: [{ exerciseId: 'squat', sets: [{ kind: 'working', weight: 40, reps: 8 }] }],
+    }).then(() => 'created', (error: unknown) => error).finally(() => { writeSettled = true })
+    await Promise.resolve()
+    expect(writeSettled).toBe(false)
+
+    releaseRemove()
+    expect(await screen.findByRole('button', { name: /add your first gym/i })).toBeInTheDocument()
+    expect(await writeOutcome).toEqual(expect.objectContaining({ message: expect.stringMatching(/gym.*not found/i) }))
+    expect(await workoutService.list()).toHaveLength(0)
+  })
+
   it('preserves the workout draft when saving fails', async () => {
     const user = userEvent.setup()
     const gymService = createGymService(createMemoryGymRepository())

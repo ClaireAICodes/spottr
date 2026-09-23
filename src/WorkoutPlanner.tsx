@@ -35,10 +35,17 @@ export function WorkoutPlanner({
   const [exercises, setExercises] = useState<Exercise[]>([])
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [duplicate, setDuplicate] = useState<DuplicateState | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<WorkoutTemplate | null>(null)
+  const [exerciseQuery, setExerciseQuery] = useState('')
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const saveInFlight = useRef(false)
+  const keepDeleteButton = useRef<HTMLButtonElement>(null)
+  const confirmDeleteButton = useRef<HTMLButtonElement>(null)
+  const deleteReturnFocus = useRef<HTMLButtonElement | null>(null)
+  const addWorkoutButton = useRef<HTMLButtonElement>(null)
+  const focusAfterDelete = useRef(false)
 
   async function load() {
     setStatus('loading')
@@ -72,6 +79,7 @@ export function WorkoutPlanner({
       })) ?? [],
     })
     setDuplicate(null)
+    setExerciseQuery('')
     setError('')
   }
 
@@ -196,15 +204,69 @@ export function WorkoutPlanner({
     }
   }
 
+  async function deleteTemplate() {
+    if (!pendingDelete || saveInFlight.current) return
+    saveInFlight.current = true
+    setIsSaving(true)
+    setError('')
+    try {
+      await workoutService.remove(pendingDelete.id)
+      focusAfterDelete.current = true
+      setPendingDelete(null)
+      await load()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The workout could not be deleted.')
+    } finally {
+      saveInFlight.current = false
+      setIsSaving(false)
+    }
+  }
+
+  function closeDeleteDialog() {
+    if (saveInFlight.current) return
+    setPendingDelete(null)
+    setError('')
+    queueMicrotask(() => deleteReturnFocus.current?.focus())
+  }
+
+  function handleDeleteDialogKeyDown(event: React.KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeDeleteDialog()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = [keepDeleteButton.current, confirmDeleteButton.current].filter(Boolean) as HTMLButtonElement[]
+    if (focusable.length === 0) return
+    const currentIndex = focusable.indexOf(document.activeElement as HTMLButtonElement)
+    const nextIndex = event.shiftKey
+      ? (currentIndex - 1 + focusable.length) % focusable.length
+      : (currentIndex + 1) % focusable.length
+    event.preventDefault()
+    focusable[nextIndex].focus()
+  }
+
+  useEffect(() => {
+    if (pendingDelete) keepDeleteButton.current?.focus()
+  }, [pendingDelete])
+
+  useEffect(() => {
+    if (!pendingDelete && !isSaving && focusAfterDelete.current) {
+      focusAfterDelete.current = false
+      addWorkoutButton.current?.focus()
+    }
+  }, [pendingDelete, isSaving])
+
   return (
     <section id="main-view" role="tabpanel" aria-labelledby="tab-plan" className="workout-planner">
+      <div className="workout-planner-content" inert={pendingDelete ? true : undefined} aria-hidden={pendingDelete ? true : undefined}>
       <div className="section-heading workout-heading">
         <div>
           <p className="eyebrow">Gym-linked templates</p>
           <h2>Workouts</h2>
           <p>Build ordered workouts from shared exercises and independent set targets.</p>
         </div>
-        <ActionButton type="button" onClick={() => openEditor(null)} disabled={isSaving || gyms.length === 0 || exercises.length === 0}>
+        <ActionButton ref={addWorkoutButton} type="button" onClick={() => openEditor(null)} disabled={isSaving || gyms.length === 0 || exercises.length === 0}>
           <Plus size={18} aria-hidden="true" /> Add workout
         </ActionButton>
       </div>
@@ -234,6 +296,7 @@ export function WorkoutPlanner({
               <div className="workout-card-actions">
                 <button type="button" onClick={() => openEditor(template)} disabled={isSaving}><Pencil size={16} aria-hidden="true" /> Edit</button>
                 <button type="button" onClick={() => setDuplicate({ template, gymId: template.gymId })} disabled={isSaving}><Copy size={16} aria-hidden="true" /> Duplicate</button>
+                <button type="button" onClick={(event) => { deleteReturnFocus.current = event.currentTarget; setError(''); setPendingDelete(template) }} disabled={isSaving}><Trash2 size={16} aria-hidden="true" /> Delete</button>
               </div>
             </article>
           ))}
@@ -260,7 +323,11 @@ export function WorkoutPlanner({
 
             <div className="exercise-palette" aria-label="Add shared exercises">
               <strong>Shared exercises</strong>
-              <div>{exercises.map((exercise) => <button key={exercise.id} type="button" disabled={isSaving || editor.exercises.some((item) => item.exerciseId === exercise.id)} onClick={() => addExercise(exercise.id)}>Add {exercise.name}</button>)}</div>
+              <label>Search shared exercises<input type="search" value={exerciseQuery} onChange={(event) => setExerciseQuery(event.target.value)} placeholder="Name, muscle, equipment, or notes" /></label>
+              <div>{exercises.filter((exercise) => {
+                const query = exerciseQuery.trim().toLocaleLowerCase()
+                return !query || [exercise.name, exercise.muscleGroup, exercise.equipment, exercise.notes].some((value) => value.toLocaleLowerCase().includes(query))
+              }).map((exercise) => <button key={exercise.id} type="button" disabled={isSaving || editor.exercises.some((item) => item.exerciseId === exercise.id)} onClick={() => addExercise(exercise.id)}>Add {exercise.name}</button>)}</div>
             </div>
 
             <div className="template-exercises">
@@ -301,6 +368,18 @@ export function WorkoutPlanner({
             <div className="form-actions"><button type="button" className="text-button" disabled={isSaving} onClick={() => setEditor(null)}>Cancel</button><ActionButton type="submit" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save workout'}</ActionButton></div>
           </form>
         </Panel>
+      )}
+      </div>
+
+      {pendingDelete && (
+        <div className="dialog-backdrop">
+          <div role="dialog" aria-modal="true" aria-labelledby="delete-workout-title" className="confirm-dialog" onKeyDown={handleDeleteDialogKeyDown}>
+            <h3 id="delete-workout-title">Delete {pendingDelete.name}?</h3>
+            <p>This removes only this workout template. Shared exercises and other copies stay available.</p>
+            {error && <p role="alert" className="form-message error-copy">{error}</p>}
+            <div className="form-actions"><button ref={keepDeleteButton} type="button" className="text-button" disabled={isSaving} onClick={closeDeleteDialog}>Keep workout</button><button ref={confirmDeleteButton} type="button" className="danger-confirm" disabled={isSaving} onClick={() => void deleteTemplate()}>{isSaving ? 'Deleting…' : 'Delete workout'}</button></div>
+          </div>
+        </div>
       )}
     </section>
   )

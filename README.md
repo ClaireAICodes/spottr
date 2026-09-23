@@ -11,9 +11,10 @@ A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profi
 - selected-gym context exposed at the future workout-entry seam
 - IndexedDB-backed shared exercise create, search, edit, and reload
 - ordered local exercise images/videos with image compression and bounded storage
-- gym-linked workout templates with ordered shared exercises and independent warm-up, working, and drop-set targets
+- gym-linked workout templates with searchable shared exercises and independent warm-up, working, and drop-set targets
 - same-gym/cross-gym workout duplication plus explicit duplicate-for-variation exercise identity
-- global shared-exercise edits propagate through references while variations and removed template references stay isolated
+- confirmed template deletion and protection against deleting gyms that still own templates
+- global shared-exercise edits propagate through references while variations, copies, and removed templates stay isolated
 - offline reload support for previously loaded local app resources and exercise data
 - responsive layouts verified at 390×844 and 1440×900
 

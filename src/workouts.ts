@@ -1,3 +1,5 @@
+import { withWorkoutIntegrityLock } from './workoutIntegrity'
+
 export type SetKind = 'warm-up' | 'working' | 'drop'
 
 export type SetTarget = {
@@ -44,6 +46,7 @@ export type WorkoutService = ReturnType<typeof createWorkoutService>
 type WorkoutServiceOptions = {
   createId?: () => string
   now?: () => string
+  gymExists?: (id: string) => Promise<boolean>
 }
 
 function cloneTemplate(template: WorkoutTemplate): WorkoutTemplate {
@@ -59,6 +62,10 @@ function cloneTemplate(template: WorkoutTemplate): WorkoutTemplate {
 export function createWorkoutService(repository: WorkoutRepository, options: WorkoutServiceOptions = {}) {
   const createId = options.createId ?? (() => crypto.randomUUID())
   const now = options.now ?? (() => new Date().toISOString())
+
+  async function ensureGymExists(gymId: string) {
+    if (options.gymExists && !(await options.gymExists(gymId))) throw new Error('Gym not found')
+  }
 
   function normalize(
     draft: WorkoutTemplateDraft,
@@ -88,6 +95,7 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
         id: referenceId,
         exerciseId,
         sets: exercise.sets.map((set) => {
+          if (!['warm-up', 'working', 'drop'].includes(set.kind)) throw new Error('Choose a valid set type')
           if (!Number.isFinite(set.weight) || set.weight < 0) throw new Error('Set weight must be zero or greater')
           if (!Number.isInteger(set.reps) || set.reps <= 0) throw new Error('Set reps must be a positive whole number')
           const existingSet = existingExercise?.sets.find(({ id }) => id === set.id && !usedSetIds.has(id))
@@ -126,43 +134,52 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     },
 
     async create(draft: WorkoutTemplateDraft) {
-      const timestamp = now()
-      const template: WorkoutTemplate = {
-        id: createId(),
-        ...normalize(draft, undefined, true),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }
-      await repository.save(template)
-      return cloneTemplate(template)
+      return withWorkoutIntegrityLock(async () => {
+        await ensureGymExists(draft.gymId.trim())
+        const timestamp = now()
+        const template: WorkoutTemplate = {
+          id: createId(),
+          ...normalize(draft, undefined, true),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+        await repository.save(template)
+        return cloneTemplate(template)
+      })
     },
 
     async update(id: string, draft: WorkoutTemplateDraft) {
-      const current = await requireTemplate(id)
-      const template: WorkoutTemplate = {
-        ...current,
-        ...normalize(draft, current),
-        updatedAt: now(),
-      }
-      await repository.save(template)
-      return cloneTemplate(template)
+      return withWorkoutIntegrityLock(async () => {
+        const current = await requireTemplate(id)
+        await ensureGymExists(draft.gymId.trim())
+        const template: WorkoutTemplate = {
+          ...current,
+          ...normalize(draft, current),
+          updatedAt: now(),
+        }
+        await repository.save(template)
+        return cloneTemplate(template)
+      })
     },
 
     async duplicate(id: string, gymId: string) {
-      const current = await requireTemplate(id)
-      const timestamp = now()
-      const template: WorkoutTemplate = {
-        id: createId(),
-        ...normalize({
-          name: `${current.name} copy`,
-          gymId,
-          exercises: current.exercises,
-        }, undefined, true),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }
-      await repository.save(template)
-      return cloneTemplate(template)
+      return withWorkoutIntegrityLock(async () => {
+        const current = await requireTemplate(id)
+        await ensureGymExists(gymId.trim())
+        const timestamp = now()
+        const template: WorkoutTemplate = {
+          id: createId(),
+          ...normalize({
+            name: `${current.name} copy`,
+            gymId,
+            exercises: current.exercises,
+          }, undefined, true),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+        await repository.save(template)
+        return cloneTemplate(template)
+      })
     },
 
     async substituteExercise(id: string, templateExerciseId: string, exerciseId: string) {
@@ -185,7 +202,7 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     },
 
     async remove(id: string) {
-      await repository.remove(id)
+      await withWorkoutIntegrityLock(() => repository.remove(id))
     },
   }
 }

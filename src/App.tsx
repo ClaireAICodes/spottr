@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   BarChart3,
@@ -19,6 +19,7 @@ import { createExerciseService, type ExerciseService } from './exercises'
 import { createIndexedDbGymRepository } from './gymRepository'
 import { createGymService, type Gym, type GymService } from './gyms'
 import { createIndexedDbWorkoutRepository } from './workoutRepository'
+import { withWorkoutIntegrityLock } from './workoutIntegrity'
 import { createWorkoutService, type WorkoutService } from './workouts'
 
 const tabs = [
@@ -32,7 +33,9 @@ const tabs = [
 const compactNavQuery = '(max-width: 820px)'
 const defaultGymService = createGymService(createIndexedDbGymRepository())
 const defaultExerciseService = createExerciseService(createIndexedDbExerciseRepository())
-const defaultWorkoutService = createWorkoutService(createIndexedDbWorkoutRepository())
+const defaultWorkoutService = createWorkoutService(createIndexedDbWorkoutRepository(), {
+  gymExists: async (id) => Boolean(await defaultGymService.get(id)),
+})
 
 export function App({
   gymService = defaultGymService,
@@ -52,6 +55,17 @@ export function App({
     () => typeof window.matchMedia === 'function' && window.matchMedia(compactNavQuery).matches,
   )
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const managedGymService = useMemo(() => ({
+    ...gymService,
+    async remove(id: string) {
+      await withWorkoutIntegrityLock(async () => {
+        if ((await workoutService.list(id)).length > 0) {
+          throw new Error('Delete linked workouts before deleting this gym')
+        }
+        await gymService.remove(id)
+      })
+    },
+  }), [gymService, workoutService])
 
   useEffect(() => {
     if (!window.matchMedia) return
@@ -125,7 +139,7 @@ export function App({
 
         {activeTab === 0 && isManagingGyms ? (
           <GymManager
-            service={gymService}
+            service={managedGymService}
             onClose={() => setIsManagingGyms(false)}
             onSelectionChange={loadSelectedGym}
           />
