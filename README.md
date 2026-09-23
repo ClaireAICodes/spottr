@@ -16,7 +16,7 @@ A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profi
 - confirmed template deletion and protection against deleting gyms that still own templates
 - global shared-exercise edits propagate through references while variations, copies, and removed templates stay isolated
 - offline reload support for previously loaded local app resources and exercise data
-- responsive layouts verified at 390×844 and 1440×900
+- responsive layouts verified at 390×844, the populated workout editor at 393×844, and 1440×900
 
 ## Run
 
@@ -45,6 +45,6 @@ This checkpoint intentionally stops at reusable workout templates and shared-exe
 - `evidence/exercise-library-verification.md`
 - `evidence/exercise-media-verification.md`
 - `evidence/workout-template-verification.md`
-- `evidence/screenshots/spottr-workouts-390x844.png`
+- `evidence/screenshots/spottr-workouts-393x844.png`
 - `evidence/no-w38-reuse-proof.md`
 - `evidence/verification.md`

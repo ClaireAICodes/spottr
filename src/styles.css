@@ -389,6 +389,19 @@ p { color: var(--muted); line-height: 1.55; }
   .workout-heading { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 600px) {
+  .workout-card { align-items: stretch; flex-direction: column; }
+  .workout-card-actions button { flex: 1; }
+  .workout-basics { grid-template-columns: 1fr; }
+  .template-exercise-heading { align-items: flex-start; flex-direction: column; }
+  .template-exercise-heading .compact-actions { width: 100%; }
+  .template-exercise-heading .compact-actions button { flex: 1; }
+  .set-targets li { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr); align-items: end; }
+  .set-targets li label:first-of-type { grid-column: 2 / -1; }
+  .set-targets .compact-actions { grid-column: 1 / -1; }
+  .set-targets .compact-actions button { flex: 1; width: auto; }
+}
+
 @media (max-width: 390px) {
   .brand-rail { padding-inline: 18px; }
   .main-canvas { padding-inline: 18px; }
@@ -405,16 +418,6 @@ p { color: var(--muted); line-height: 1.55; }
   .media-actions { grid-column: 1 / -1; }
   .media-actions button { flex: 1; }
   .exercise-fields { grid-template-columns: 1fr; }
-  .workout-card { align-items: stretch; flex-direction: column; }
-  .workout-card-actions button { flex: 1; }
-  .workout-basics { grid-template-columns: 1fr; }
-  .template-exercise-heading { align-items: flex-start; flex-direction: column; }
-  .template-exercise-heading .compact-actions { width: 100%; }
-  .template-exercise-heading .compact-actions button { flex: 1; }
-  .set-targets li { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr); align-items: end; }
-  .set-targets li label:first-of-type { grid-column: 2 / -1; }
-  .set-targets .compact-actions { grid-column: 1 / -1; }
-  .set-targets .compact-actions button { flex: 1; width: auto; }
   .form-actions { align-items: stretch; flex-direction: column-reverse; }
   .form-actions > * { width: 100%; }
 }

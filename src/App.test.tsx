@@ -564,7 +564,7 @@ describe('workout template journey', () => {
     const north = await gymService.create({ name: 'North Gym', address: '' })
     const south = await gymService.create({ name: 'South Gym', address: '' })
     const exerciseService = createExerciseService(createMemoryExerciseRepository())
-    await exerciseService.create({ name: 'Back Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: '' })
+    const backSquat = await exerciseService.create({ name: 'Back Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: '' })
     await exerciseService.create({ name: 'Cable Row', muscleGroup: 'Back', equipment: 'Cable', notes: '' })
     const workoutService = createWorkoutService(createMemoryWorkoutRepository())
     const firstRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
@@ -593,7 +593,7 @@ describe('workout template journey', () => {
     expect(await screen.findByRole('article', { name: 'Lower Strength' })).toHaveTextContent('2 exercises')
 
     firstRender.unmount()
-    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
+    const restoredRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
     await user.click(screen.getByRole('tab', { name: /plan/i }))
     const restored = await screen.findByRole('article', { name: 'Lower Strength' })
     await user.click(within(restored).getByRole('button', { name: /edit/i }))
@@ -613,6 +613,23 @@ describe('workout template journey', () => {
     await user.click(within(screen.getByRole('article', { name: /back squat sets/i })).getByRole('button', { name: /duplicate for variation/i }))
     expect(await screen.findByRole('article', { name: /back squat variation sets/i })).toBeInTheDocument()
     expect(await exerciseService.search('Back Squat')).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: /save workout/i }))
+
+    await exerciseService.update(backSquat.id, { ...backSquat, name: 'Back Squat Updated' })
+    restoredRender.unmount()
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
+    await user.click(screen.getByRole('tab', { name: /plan/i }))
+
+    const propagatedOriginal = await screen.findByRole('article', { name: 'Lower Strength' })
+    await user.click(within(propagatedOriginal).getByRole('button', { name: /edit/i }))
+    expect(screen.getByRole('article', { name: /back squat updated sets/i })).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: /back squat variation sets/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /cancel/i }))
+
+    const independentCopy = screen.getByRole('article', { name: 'Lower Strength copy' })
+    await user.click(within(independentCopy).getByRole('button', { name: /edit/i }))
+    expect(screen.getByRole('article', { name: /back squat variation sets/i })).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: /back squat updated sets/i })).not.toBeInTheDocument()
   })
 
   it('shows global exercise edits through shared references', async () => {

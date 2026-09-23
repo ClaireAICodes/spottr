@@ -166,17 +166,31 @@ describe('workout template service', () => {
     expect((await service.get(duplicate.id))?.exercises.map(({ exerciseId }) => exerciseId)).toEqual(['squat', 'row'])
   })
 
-  it('reloads the exact nested order from IndexedDB', async () => {
+  it('persists and reloads the exact reordered mixed-set targets from IndexedDB', async () => {
     const databaseName = `spottr-workouts-${crypto.randomUUID()}`
     const firstRepository = createIndexedDbWorkoutRepository(databaseName)
-    const created = await createWorkoutService(firstRepository, { createId: sequentialIds() }).create(mixedDraft)
+    const firstService = createWorkoutService(firstRepository, { createId: sequentialIds() })
+    const created = await firstService.create(mixedDraft)
+    const squat = created.exercises[0]
+    await firstService.update(created.id, {
+      name: created.name,
+      gymId: created.gymId,
+      exercises: [
+        created.exercises[1],
+        { ...squat, sets: [squat.sets[2], squat.sets[0], squat.sets[1]] },
+      ],
+    })
     await firstRepository.close?.()
 
     const reloadedRepository = createIndexedDbWorkoutRepository(databaseName)
     const restored = await createWorkoutService(reloadedRepository).get(created.id)
 
-    expect(restored?.exercises.map(({ exerciseId }) => exerciseId)).toEqual(['squat', 'row'])
-    expect(restored?.exercises[0].sets.map(({ kind }) => kind)).toEqual(['warm-up', 'working', 'drop'])
+    expect(restored?.exercises.map(({ exerciseId }) => exerciseId)).toEqual(['row', 'squat'])
+    expect(restored?.exercises[1].sets.map(({ kind, weight, reps }) => ({ kind, weight, reps }))).toEqual([
+      { kind: 'drop', weight: 60, reps: 8 },
+      { kind: 'warm-up', weight: 20, reps: 10 },
+      { kind: 'working', weight: 80, reps: 5 },
+    ])
     await reloadedRepository.close?.()
     indexedDB.deleteDatabase(databaseName)
   })

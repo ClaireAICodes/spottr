@@ -9,7 +9,7 @@ test.beforeAll(async () => {
 })
 
 test('builds, reloads, duplicates, and varies a mixed-set workout on mobile', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
+  await page.setViewportSize({ width: 393, height: 844 })
   await page.goto('/')
 
   await page.getByRole('button', { name: 'Manage gyms' }).click()
@@ -41,6 +41,17 @@ test('builds, reloads, duplicates, and varies a mixed-set workout on mobile', as
   await squat.getByLabel('Set 3 weight').fill('60')
   await squat.getByLabel('Set 3 reps').fill('8')
   await page.getByRole('button', { name: 'Add Cable Row' }).click()
+  const editor = page.locator('.workout-editor')
+  const clippedControls = await editor.locator('input, select, button').evaluateAll((controls) => controls
+    .filter((control) => {
+      const bounds = control.getBoundingClientRect()
+      const panelBounds = control.closest('.workout-editor')?.getBoundingClientRect()
+      return !panelBounds
+        || bounds.left < Math.max(0, panelBounds.left)
+        || bounds.right > Math.min(window.innerWidth, panelBounds.right)
+    })
+    .map((control) => control.getAttribute('aria-label') ?? control.textContent?.trim() ?? control.tagName))
+  expect(clippedControls).toEqual([])
   await page.getByRole('article', { name: 'Cable Row sets' }).getByRole('button', { name: 'Move exercise up' }).click()
   await expect(page.getByRole('article', { name: /sets/ }).first()).toHaveAttribute('aria-label', 'Cable Row sets')
   await page.getByRole('button', { name: 'Save workout' }).click()
@@ -67,6 +78,6 @@ test('builds, reloads, duplicates, and varies a mixed-set workout on mobile', as
   await expect(page.getByRole('article', { name: 'Back Squat variation sets' })).toBeVisible()
   await page.getByRole('button', { name: 'Save workout' }).click()
 
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
-  await page.screenshot({ path: resolve(evidenceDir, 'spottr-workouts-390x844.png'), fullPage: true })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: resolve(evidenceDir, 'spottr-workouts-393x844.png'), fullPage: true })
 })
