@@ -42,6 +42,10 @@ test('builds, reloads, duplicates, and varies a mixed-set workout on mobile', as
   await squat.getByLabel('Set 3 reps').fill('8')
   await page.getByRole('button', { name: 'Add Cable Row' }).click()
   const editor = page.locator('.workout-editor')
+  expect(await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+  }))).toEqual({ scrollWidth: 393, innerWidth: 393 })
   const clippedControls = await editor.locator('input, select, button').evaluateAll((controls) => controls
     .filter((control) => {
       const bounds = control.getBoundingClientRect()
@@ -78,6 +82,16 @@ test('builds, reloads, duplicates, and varies a mixed-set workout on mobile', as
   await expect(page.getByRole('article', { name: 'Back Squat variation sets' })).toBeVisible()
   await page.getByRole('button', { name: 'Save workout' }).click()
 
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  const overflowState = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth,
+    offenders: Array.from(document.querySelectorAll<HTMLElement>('body *'))
+      .filter((element) => {
+        const bounds = element.getBoundingClientRect()
+        return bounds.left < 0 || bounds.right > window.innerWidth
+      })
+      .map((element) => `${element.tagName.toLowerCase()}.${element.className}`),
+  }))
+  expect(overflowState).toEqual({ scrollWidth: 393, innerWidth: 393, offenders: [] })
   await page.screenshot({ path: resolve(evidenceDir, 'spottr-workouts-393x844.png'), fullPage: true })
 })

@@ -75,6 +75,7 @@ button { color: inherit; }
 }
 
 .main-canvas {
+  min-width: 0;
   width: min(100%, 1040px);
   margin: 0 auto;
   padding: 54px clamp(32px, 6vw, 90px) 64px;
