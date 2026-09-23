@@ -107,6 +107,25 @@ export function createExerciseService(repository: ExerciseRepository, options: E
       return exercise
     },
 
+    async duplicate(id: string, name?: string) {
+      const current = await requireExercise(id)
+      const timestamp = now()
+      const exercise: Exercise = {
+        id: createId(),
+        ...normalize({
+          name: name ?? `${current.name} variation`,
+          muscleGroup: current.muscleGroup,
+          equipment: current.equipment,
+          notes: current.notes,
+        }),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        media: [],
+      }
+      await repository.save(exercise)
+      return exercise
+    },
+
     async get(id: string) {
       const exercise = await repository.get(id)
       return exercise ? withMedia(exercise) : null

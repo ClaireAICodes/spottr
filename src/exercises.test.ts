@@ -10,6 +10,42 @@ import {
 import { createIndexedDbExerciseRepository } from './exerciseRepository'
 
 describe('shared exercise library', () => {
+  it('exerciseVariation_duplicate_createsAnIndependentSharedIdentity', async () => {
+    const service = createExerciseService(createMemoryExerciseRepository(), {
+      createId: (() => {
+        let value = 0
+        return () => `exercise-${++value}`
+      })(),
+      now: () => '2026-09-23T01:15:00.000Z',
+      prepareImage: async (file) => file,
+    })
+    const original = await service.create({
+      name: 'Back Squat',
+      muscleGroup: 'Legs',
+      equipment: 'Barbell',
+      notes: 'Standard stance',
+    })
+    await service.addMedia(original.id, new File(['setup'], 'setup.png', { type: 'image/png' }))
+
+    const variation = await service.duplicate(original.id, 'Pause Squat')
+    await service.update(variation.id, { ...variation, notes: 'Two-second pause' })
+
+    expect(variation).toMatchObject({
+      id: 'exercise-3',
+      name: 'Pause Squat',
+      muscleGroup: 'Legs',
+      equipment: 'Barbell',
+      notes: 'Standard stance',
+      media: [],
+    })
+    expect(await service.get(original.id)).toMatchObject({
+      id: 'exercise-1',
+      name: 'Back Squat',
+      notes: 'Standard stance',
+      media: [expect.objectContaining({ name: 'setup.png' })],
+    })
+  })
+
   it('exerciseLibrary_createSearchEdit_returnsMatchingSharedExercises', async () => {
     const service = createExerciseService(createMemoryExerciseRepository(), {
       createId: () => 'exercise-1',

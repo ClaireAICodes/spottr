@@ -13,10 +13,13 @@ import {
 import { ActionButton, Panel, StatusPill } from './primitives'
 import { ExerciseLibrary } from './ExerciseLibrary'
 import { GymManager } from './GymManager'
+import { WorkoutPlanner } from './WorkoutPlanner'
 import { createIndexedDbExerciseRepository } from './exerciseRepository'
 import { createExerciseService, type ExerciseService } from './exercises'
 import { createIndexedDbGymRepository } from './gymRepository'
 import { createGymService, type Gym, type GymService } from './gyms'
+import { createIndexedDbWorkoutRepository } from './workoutRepository'
+import { createWorkoutService, type WorkoutService } from './workouts'
 
 const tabs = [
   { label: 'Home', icon: Home },
@@ -29,13 +32,16 @@ const tabs = [
 const compactNavQuery = '(max-width: 820px)'
 const defaultGymService = createGymService(createIndexedDbGymRepository())
 const defaultExerciseService = createExerciseService(createIndexedDbExerciseRepository())
+const defaultWorkoutService = createWorkoutService(createIndexedDbWorkoutRepository())
 
 export function App({
   gymService = defaultGymService,
   exerciseService = defaultExerciseService,
+  workoutService = defaultWorkoutService,
 }: {
   gymService?: GymService
   exerciseService?: ExerciseService
+  workoutService?: WorkoutService
 }) {
   const [activeTab, setActiveTab] = useState(0)
   const [isManagingGyms, setIsManagingGyms] = useState(false)
@@ -132,6 +138,8 @@ export function App({
           />
         ) : activeTab === 1 ? (
           <ExerciseLibrary service={exerciseService} />
+        ) : activeTab === 2 ? (
+          <WorkoutPlanner workoutService={workoutService} gymService={gymService} exerciseService={exerciseService} />
         ) : (
           <QuietPlaceholder title={current.label} labelledBy={`tab-${current.label.toLowerCase()}`} />
         )}
