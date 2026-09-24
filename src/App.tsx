@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { ActionButton, Panel, StatusPill } from './primitives'
+import { ActiveSession } from './ActiveSession'
 import { ExerciseLibrary } from './ExerciseLibrary'
 import { GymManager } from './GymManager'
 import { WorkoutPlanner } from './WorkoutPlanner'
@@ -19,8 +20,10 @@ import { createExerciseService, type ExerciseService } from './exercises'
 import { createIndexedDbGymRepository } from './gymRepository'
 import { createGymService, type Gym, type GymService } from './gyms'
 import { createIndexedDbWorkoutRepository } from './workoutRepository'
+import { createIndexedDbSessionRepository } from './sessionRepository'
+import { createMemorySessionRepository, createSessionService, type SessionService, type WorkoutSession } from './sessions'
 import { withWorkoutIntegrityLock } from './workoutIntegrity'
-import { createWorkoutService, type WorkoutService } from './workouts'
+import { createWorkoutService, type WorkoutService, type WorkoutTemplate } from './workouts'
 
 const tabs = [
   { label: 'Home', icon: Home },
@@ -36,21 +39,36 @@ const defaultExerciseService = createExerciseService(createIndexedDbExerciseRepo
 const defaultWorkoutService = createWorkoutService(createIndexedDbWorkoutRepository(), {
   gymExists: async (id) => Boolean(await defaultGymService.get(id)),
 })
+const defaultSessionService = createSessionService(
+  createIndexedDbSessionRepository(),
+  defaultWorkoutService,
+  defaultExerciseService,
+)
 
 export function App({
   gymService = defaultGymService,
   exerciseService = defaultExerciseService,
   workoutService = defaultWorkoutService,
+  sessionService,
 }: {
   gymService?: GymService
   exerciseService?: ExerciseService
   workoutService?: WorkoutService
+  sessionService?: SessionService
 }) {
   const [activeTab, setActiveTab] = useState(0)
   const [isManagingGyms, setIsManagingGyms] = useState(false)
   const [selectedGym, setSelectedGym] = useState<Gym | null>(null)
   const [gymStatus, setGymStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null)
+  const [sessionTemplates, setSessionTemplates] = useState<WorkoutTemplate[]>([])
+  const [isSessionOpen, setIsSessionOpen] = useState(false)
+  const [sessionLoadError, setSessionLoadError] = useState('')
+  const [templateLoadError, setTemplateLoadError] = useState('')
+  const [templateStatus, setTemplateStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [templateReload, setTemplateReload] = useState(0)
   const selectedGymRequest = useRef(0)
+  const activeSessionRequest = useRef(0)
   const [isCompactNav, setIsCompactNav] = useState(
     () => typeof window.matchMedia === 'function' && window.matchMedia(compactNavQuery).matches,
   )
@@ -66,6 +84,11 @@ export function App({
       })
     },
   }), [gymService, workoutService])
+  const activeSessionService = useMemo(() => sessionService ?? (
+    workoutService === defaultWorkoutService && exerciseService === defaultExerciseService
+      ? defaultSessionService
+      : createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+  ), [exerciseService, sessionService, workoutService])
 
   useEffect(() => {
     if (!window.matchMedia) return
@@ -96,6 +119,59 @@ export function App({
     loadSelectedGym()
     return () => { selectedGymRequest.current += 1 }
   }, [gymService])
+
+  async function loadActiveSession() {
+    const requestId = ++activeSessionRequest.current
+    try {
+      const session = await activeSessionService.getActive()
+      if (requestId !== activeSessionRequest.current) return
+      setActiveSession(session)
+      setSessionLoadError('')
+    } catch {
+      if (requestId !== activeSessionRequest.current) return
+      setSessionLoadError('Your active session could not be loaded. Your saved data has not been changed.')
+    }
+  }
+
+  useEffect(() => {
+    setActiveSession(null)
+    setIsSessionOpen(false)
+    setSessionLoadError('')
+    void loadActiveSession()
+    return () => { activeSessionRequest.current += 1 }
+  }, [activeSessionService])
+
+  useEffect(() => {
+    let current = true
+    if (!selectedGym) {
+      setSessionTemplates([])
+      setTemplateStatus('idle')
+      return () => { current = false }
+    }
+    setSessionTemplates([])
+    setTemplateLoadError('')
+    setTemplateStatus('loading')
+    workoutService.list(selectedGym.id).then((templates) => {
+      if (current) {
+        setSessionTemplates(templates)
+        setTemplateLoadError('')
+        setTemplateStatus('ready')
+      }
+    }).catch(() => {
+      if (current) {
+        setTemplateLoadError('Your saved workouts could not be loaded. Your saved data has not been changed.')
+        setTemplateStatus('error')
+      }
+    })
+    return () => { current = false }
+  }, [activeTab, selectedGym, workoutService, templateReload])
+
+  async function startSession(templateId: string) {
+    const session = await activeSessionService.start(templateId)
+    activeSessionRequest.current += 1
+    setActiveSession(session)
+    setIsSessionOpen(true)
+  }
 
   function selectTab(index: number) {
     setActiveTab(index)
@@ -137,7 +213,9 @@ export function App({
           <button className="avatar-button" aria-label="Open profile"><span aria-hidden="true">P</span></button>
         </header>
 
-        {activeTab === 0 && isManagingGyms ? (
+        {activeTab === 0 && isSessionOpen && activeSession ? (
+          <ActiveSession initialSession={activeSession} sessionService={activeSessionService} onSessionChange={setActiveSession} />
+        ) : activeTab === 0 && isManagingGyms ? (
           <GymManager
             service={managedGymService}
             onClose={() => setIsManagingGyms(false)}
@@ -149,6 +227,15 @@ export function App({
             gymStatus={gymStatus}
             onManageGyms={() => setIsManagingGyms(true)}
             onRetry={loadSelectedGym}
+            templates={sessionTemplates}
+            activeSession={activeSession}
+            onStart={startSession}
+            onResume={() => setIsSessionOpen(true)}
+            sessionLoadError={sessionLoadError}
+            templateLoadError={templateLoadError}
+            templateStatus={templateStatus}
+            onRetrySession={() => void loadActiveSession()}
+            onRetryTemplates={() => setTemplateReload((value) => value + 1)}
           />
         ) : activeTab === 1 ? (
           <ExerciseLibrary service={exerciseService} />
@@ -189,12 +276,42 @@ function HomeFrames({
   gymStatus,
   onManageGyms,
   onRetry,
+  templates,
+  activeSession,
+  onStart,
+  onResume,
+  sessionLoadError,
+  templateLoadError,
+  templateStatus,
+  onRetrySession,
+  onRetryTemplates,
 }: {
   selectedGym: Gym | null
   gymStatus: 'loading' | 'ready' | 'error'
   onManageGyms: () => void
   onRetry: () => void
+  templates: WorkoutTemplate[]
+  activeSession: WorkoutSession | null
+  onStart: (templateId: string) => Promise<void>
+  onResume: () => void
+  sessionLoadError: string
+  templateLoadError: string
+  templateStatus: 'idle' | 'loading' | 'ready' | 'error'
+  onRetrySession: () => void
+  onRetryTemplates: () => void
 }) {
+  const [isChoosingWorkout, setIsChoosingWorkout] = useState(false)
+  const [startError, setStartError] = useState('')
+
+  async function start(templateId: string) {
+    setStartError('')
+    try {
+      await onStart(templateId)
+    } catch (caught) {
+      setStartError(caught instanceof Error ? caught.message : 'The workout could not be started.')
+    }
+  }
+
   return (
     <div id="main-view" role="tabpanel" aria-labelledby="tab-home" className="home-grid">
       <Panel className="welcome-panel" aria-labelledby="welcome-title">
@@ -213,11 +330,18 @@ function HomeFrames({
         ) : (
           <p>Add a gym before starting so your future routines match the equipment around you.</p>
         )}
-        <ActionButton disabled aria-describedby="preview-note">
+        <ActionButton disabled={gymStatus !== 'ready' || !selectedGym || templateStatus !== 'ready' || templates.length === 0 || Boolean(activeSession) || Boolean(sessionLoadError)} onClick={() => setIsChoosingWorkout(true)}>
           <Play size={18} fill="currentColor" aria-hidden="true" /> {selectedGym ? `Start workout at ${selectedGym.name}` : 'Choose a gym to start'}
         </ActionButton>
+        {isChoosingWorkout && !activeSession && (
+          <div className="workout-choices" aria-label="Choose a workout">
+            {templates.map((template) => <button key={template.id} type="button" onClick={() => void start(template.id)}>Start {template.name}</button>)}
+          </div>
+        )}
+        {startError && <p role="alert" className="form-message error-copy">{startError}</p>}
+        {templateLoadError && <div role="alert" className="form-message error-copy"><p>{templateLoadError}</p><button type="button" className="text-button" onClick={onRetryTemplates}>Try again</button></div>}
         <button type="button" className="manage-gyms-button" onClick={onManageGyms}>Manage gyms</button>
-        <small id="preview-note">Preview only · workout templates arrive later</small>
+        {!templateLoadError && !activeSession && selectedGym && templateStatus === 'ready' && templates.length === 0 && <small>No saved workouts for this gym yet.</small>}
       </Panel>
 
       <Panel className="resume-panel" aria-labelledby="resume-title">
@@ -226,16 +350,19 @@ function HomeFrames({
           <span className="live-dot">Paused</span>
         </div>
         <h2 id="resume-title">Resume your session</h2>
-        <p className="session-name">Upper body · Free session</p>
-        <dl className="session-stats">
-          <div><dt>Elapsed</dt><dd>18:42</dd></div>
-          <div><dt>Exercises</dt><dd>2 of 5</dd></div>
-          <div><dt>Volume</dt><dd>1,240 kg</dd></div>
-        </dl>
-        <ActionButton disabled aria-describedby="resume-preview-note" className="dark-action">
-          Resume <ChevronRight size={18} aria-hidden="true" />
-        </ActionButton>
-        <small id="resume-preview-note">Static resume frame · no session logic</small>
+        {sessionLoadError && <div role="alert"><p>{sessionLoadError}</p><button type="button" className="text-button" onClick={onRetrySession}>Try again</button></div>}
+        {!sessionLoadError && <>
+          <p className="session-name">{activeSession?.name ?? 'No session in progress'}</p>
+          <dl className="session-stats">
+            <div><dt>Status</dt><dd>{activeSession ? 'Saved' : 'Ready'}</dd></div>
+            <div><dt>Exercises</dt><dd>{activeSession?.exercises.length ?? 0}</dd></div>
+            <div><dt>Logged</dt><dd>{activeSession?.exercises.flatMap(({ sets }) => sets).filter(({ completedAt }) => completedAt).length ?? 0}</dd></div>
+          </dl>
+          <ActionButton disabled={!activeSession} className="dark-action" onClick={onResume}>
+            {activeSession ? `Resume ${activeSession.name}` : 'Nothing to resume'} <ChevronRight size={18} aria-hidden="true" />
+          </ActionButton>
+          <small>{activeSession ? 'Your latest set log is stored on this device.' : 'Start a saved workout to create a session snapshot.'}</small>
+        </>}
       </Panel>
 
       <section className="principle-strip" aria-label="Product principles">

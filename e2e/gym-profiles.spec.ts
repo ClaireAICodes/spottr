@@ -31,6 +31,7 @@ test('persists a two-gym journey with manual fallback and destructive confirmati
   await page.getByLabel('Gym name').fill('Downtown Strength')
   await page.getByRole('button', { name: 'Save changes' }).click()
   await page.getByRole('article', { name: 'Downtown Strength' }).getByRole('button', { name: 'Select' }).click()
+  await expect(page.getByRole('article', { name: 'Downtown Strength' }).getByText('Current gym')).toBeVisible()
   await page.reload()
 
   await expect(page.getByRole('button', { name: 'Start workout at Downtown Strength' })).toBeVisible()

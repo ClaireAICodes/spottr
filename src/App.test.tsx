@@ -1,8 +1,10 @@
+import 'fake-indexeddb/auto'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from './App'
 import { createExerciseService, createMemoryExerciseRepository } from './exercises'
 import { createGymService, createMemoryGymRepository } from './gyms'
+import { createMemorySessionRepository, createSessionService } from './sessions'
 import { createMemoryWorkoutRepository, createWorkoutService } from './workouts'
 
 describe('Spottr application shell', () => {
@@ -39,12 +41,15 @@ describe('Spottr application shell', () => {
     expect(screen.getByRole('tabpanel', { name: 'Train' })).toBeInTheDocument()
   })
 
-  it('renders presentation-only empty and resume frames on Home', () => {
-    render(<App />)
+  it('renders the empty start and resume states on Home', async () => {
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    render(<App workoutService={workoutService} exerciseService={exerciseService} sessionService={sessionService} />)
 
     expect(screen.getByRole('heading', { name: /ready when you are/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /resume your session/i })).toBeInTheDocument()
-    expect(screen.getByText(/preview only/i)).toBeInTheDocument()
+    expect(await screen.findByText(/start a saved workout to create a session snapshot/i)).toBeInTheDocument()
   })
 })
 
@@ -652,5 +657,161 @@ describe('workout template journey', () => {
 
     expect(screen.getByRole('article', { name: /barbell press sets/i })).toBeInTheDocument()
     expect(screen.queryByRole('article', { name: /^press sets$/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('active workout session journey', () => {
+  it('wires the active session to injected workout and exercise services by default', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'Injected Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Injected Squat', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    await workoutService.create({ name: 'Injected Strength', gymId: gym.id, exercises: [{ exerciseId: squat.id, sets: [{ kind: 'working', weight: 40, reps: 8 }] }] })
+
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
+
+    await user.click(await screen.findByRole('button', { name: /start workout at injected gym/i }))
+    await user.click(screen.getByRole('button', { name: /start injected strength/i }))
+    expect(await screen.findByRole('heading', { name: 'Injected Strength' })).toBeInTheDocument()
+  })
+
+  it('starts from the selected gym, fast-logs a set, then reloads and resumes the snapshot', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'North Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Back Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const template = await workoutService.create({
+      name: 'Lower Strength',
+      gymId: gym.id,
+      exercises: [{ exerciseId: squat.id, sets: [{ kind: 'working', weight: 80, reps: 5 }] }],
+    })
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService, {
+      now: () => '2026-09-24T13:15:00.000Z',
+    })
+    const firstRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+
+    await user.click(await screen.findByRole('button', { name: /start workout at north gym/i }))
+    await user.click(screen.getByRole('button', { name: /start lower strength/i }))
+    expect(await screen.findByRole('heading', { name: 'Lower Strength' })).toBeInTheDocument()
+    const weight = screen.getByLabelText(/back squat set 1 weight/i)
+    await user.clear(weight)
+    await user.type(weight, '82.5')
+    await user.click(screen.getByRole('button', { name: /log back squat set 1/i }))
+    expect(await screen.findByText(/1 of 1 sets logged/i)).toBeInTheDocument()
+    expect((await workoutService.get(template.id))?.exercises[0].sets[0].weight).toBe(80)
+    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /home/i }))
+    expect(screen.getByRole('button', { name: /logged back squat set 1/i })).toBeDisabled()
+
+    firstRender.unmount()
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+    await user.click(await screen.findByRole('button', { name: /resume lower strength/i }))
+    expect(screen.getByLabelText(/back squat set 1 weight/i)).toHaveValue(82.5)
+    expect(screen.getByRole('button', { name: /logged back squat set 1/i })).toBeDisabled()
+  })
+
+  it('announces session storage failures instead of showing an empty resume state', async () => {
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const gymService = createGymService(createMemoryGymRepository())
+    const baseSessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    const sessionService = { ...baseSessionService, getActive: async () => { throw new Error('storage failed') } }
+
+    render(<App gymService={gymService} workoutService={workoutService} exerciseService={exerciseService} sessionService={sessionService} />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/active session could not be loaded/i)
+  })
+
+  it('does not offer stale workouts when the selected gym workout load fails', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const oldGym = await gymService.create({ name: 'Old Gym', address: '' })
+    const newGym = await gymService.create({ name: 'New Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    const baseWorkoutService = createWorkoutService(createMemoryWorkoutRepository())
+    await baseWorkoutService.create({ name: 'Old Workout', gymId: oldGym.id, exercises: [{ exerciseId: squat.id, sets: [{ kind: 'working', weight: 40, reps: 8 }] }] })
+    const workoutService = {
+      ...baseWorkoutService,
+      async list(gymId?: string) {
+        if (gymId === newGym.id) throw new Error('load failed')
+        return baseWorkoutService.list(gymId)
+      },
+    }
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /start workout at old gym/i })).toBeEnabled())
+
+    await user.click(screen.getByRole('button', { name: /manage gyms/i }))
+    await user.click(within(screen.getByRole('article', { name: 'New Gym' })).getByRole('button', { name: 'Select' }))
+    await user.click(screen.getByRole('button', { name: /back to home/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved workouts could not be loaded/i)
+    expect(screen.getByRole('button', { name: /start workout at new gym/i })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /start old workout/i })).not.toBeInTheDocument()
+  })
+
+  it('disables stale workout starts while a newly selected gym is loading', async () => {
+    const user = userEvent.setup()
+    const baseGymService = createGymService(createMemoryGymRepository())
+    const oldGym = await baseGymService.create({ name: 'Old Gym', address: '' })
+    await baseGymService.create({ name: 'New Gym', address: '' })
+    let selectionStarted = false
+    let readsAfterSelection = 0
+    let releaseSelectionLoad: (gym: Awaited<ReturnType<typeof baseGymService.getSelected>>) => void = () => undefined
+    const selectionLoad = new Promise<Awaited<ReturnType<typeof baseGymService.getSelected>>>((resolve) => { releaseSelectionLoad = resolve })
+    const gymService = {
+      ...baseGymService,
+      async select(id: string) {
+        await baseGymService.select(id)
+        selectionStarted = true
+      },
+      getSelected() {
+        if (!selectionStarted) return baseGymService.getSelected()
+        readsAfterSelection += 1
+        return readsAfterSelection === 1 ? baseGymService.getSelected() : selectionLoad
+      },
+    }
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    await workoutService.create({ name: 'Old Strength', gymId: oldGym.id, exercises: [{ exerciseId: squat.id, sets: [{ kind: 'working', weight: 40, reps: 8 }] }] })
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: /start workout at old gym/i })).toBeEnabled())
+
+    await user.click(screen.getByRole('button', { name: /manage gyms/i }))
+    await user.click(within(screen.getByRole('article', { name: 'New Gym' })).getByRole('button', { name: 'Select' }))
+    await user.click(screen.getByRole('button', { name: /back to home/i }))
+
+    expect(screen.getByRole('button', { name: /start workout at old gym/i })).toBeDisabled()
+    releaseSelectionLoad(await baseGymService.getSelected())
+  })
+
+  it('ignores an older active-session load after a workout starts', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    await workoutService.create({ name: 'Strength', gymId: gym.id, exercises: [{ exerciseId: squat.id, sets: [{ kind: 'working', weight: 40, reps: 8 }] }] })
+    const baseSessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    let releaseLoad: (session: null) => void = () => undefined
+    const oldLoad = new Promise<null>((resolve) => { releaseLoad = resolve })
+    const sessionService = { ...baseSessionService, getActive: () => oldLoad }
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+
+    await user.click(await screen.findByRole('button', { name: /start workout at gym/i }))
+    await user.click(screen.getByRole('button', { name: /start strength/i }))
+    expect(await screen.findByRole('heading', { name: 'Strength' })).toBeInTheDocument()
+    releaseLoad(null)
+    await act(async () => { await oldLoad })
+
+    expect(screen.getByRole('heading', { name: 'Strength' })).toBeInTheDocument()
   })
 })
