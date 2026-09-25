@@ -30,6 +30,47 @@ async function createTrainingContext() {
 }
 
 describe('active workout session service', () => {
+  it('completes a partial workout into durable history with skipped work excluded from volume', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const timestamps = ['2026-09-25T01:00:00.000Z', '2026-09-25T01:15:00.000Z', '2026-09-25T02:30:00.000Z']
+    const service = createSessionService(repository, context.workoutService, context.exerciseService, {
+      createId: () => crypto.randomUUID(),
+      now: () => timestamps.shift()!,
+    })
+    const started = await service.start(context.template.id, context.gym.name)
+
+    await service.logSet(started.exercises[0].id, started.exercises[0].sets[0].id, { weight: 22.5, reps: 9 })
+    const completed = await service.complete()
+
+    expect(completed).toMatchObject({
+      name: 'Lower Strength',
+      gymId: context.gym.id,
+      gymName: 'North Gym',
+      startedAt: '2026-09-25T01:00:00.000Z',
+      endedAt: '2026-09-25T02:30:00.000Z',
+      summary: {
+        completedExercises: 1,
+        skippedExercises: 1,
+        completedSets: 1,
+        skippedSets: 2,
+        volume: 202.5,
+        durationSeconds: 5400,
+      },
+    })
+    expect(completed.exercises[0].sets[0]).toMatchObject({ completedAt: '2026-09-25T01:15:00.000Z', skippedAt: null })
+    expect(completed.exercises[0].sets[1].skippedAt).toBe('2026-09-25T02:30:00.000Z')
+    expect(completed.exercises[1].sets[0].skippedAt).toBe('2026-09-25T02:30:00.000Z')
+    expect(await service.getActive()).toBeNull()
+    expect(await service.listHistory()).toEqual([completed])
+    expect(await service.getHistory(completed.id)).toEqual(completed)
+
+    completed.summary.volume = 999
+    const listed = await service.listHistory()
+    listed[0].summary.volume = 888
+    expect((await service.getHistory(completed.id))?.summary.volume).toBe(202.5)
+  })
+
   it('starts an independent snapshot and resumes logged sets without mutating the template', async () => {
     const context = await createTrainingContext()
     const repository = createMemorySessionRepository()
@@ -80,6 +121,46 @@ describe('active workout session service', () => {
     const restored = await createSessionService(reopenedRepository, context.workoutService, context.exerciseService).getActive()
 
     expect(restored?.exercises[0].sets[0]).toMatchObject({ weight: 25, reps: 8, completedAt: '2026-09-24T13:15:00.000Z' })
+    await reopenedRepository.close?.()
+    indexedDB.deleteDatabase(databaseName)
+  })
+
+  it('persists completed history across an IndexedDB reopen and sorts it newest first', async () => {
+    const context = await createTrainingContext()
+    const databaseName = `spottr-history-${crypto.randomUUID()}`
+    const timestamps = [
+      '2026-09-24T01:00:00.000Z',
+      '2026-09-24T02:00:00.000Z',
+      '2026-09-25T01:00:00.000Z',
+      '2026-09-25T02:00:00.000Z',
+    ]
+    const firstRepository = createIndexedDbSessionRepository(databaseName)
+    const firstService = createSessionService(firstRepository, context.workoutService, context.exerciseService, {
+      now: () => timestamps.shift()!,
+    })
+    await firstService.start(context.template.id, context.gym.name)
+    const older = await firstService.complete()
+    await context.workoutService.update(context.template.id, {
+      name: 'Newer Strength',
+      gymId: context.gym.id,
+      exercises: context.template.exercises,
+    })
+    await firstService.start(context.template.id, context.gym.name)
+    const newer = await firstService.complete()
+    await firstRepository.close?.()
+
+    const reopenedRepository = createIndexedDbSessionRepository(databaseName)
+    const reopenedService = createSessionService(reopenedRepository, context.workoutService, context.exerciseService)
+
+    expect((await reopenedService.listHistory()).map(({ id, name }) => ({ id, name }))).toEqual([
+      { id: newer.id, name: 'Newer Strength' },
+      { id: older.id, name: 'Lower Strength' },
+    ])
+    expect(await reopenedService.getHistory(older.id)).toMatchObject({
+      name: 'Lower Strength',
+      gymName: 'North Gym',
+      summary: { completedSets: 0, skippedSets: 3, volume: 0 },
+    })
     await reopenedRepository.close?.()
     indexedDB.deleteDatabase(databaseName)
   })

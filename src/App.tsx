@@ -12,6 +12,8 @@ import {
 } from 'lucide-react'
 import { ActionButton, Panel, StatusPill } from './primitives'
 import { ActiveSession } from './ActiveSession'
+import { SessionHistory } from './SessionHistory'
+import { SessionSummary } from './SessionSummary'
 import { ExerciseLibrary } from './ExerciseLibrary'
 import { GymManager } from './GymManager'
 import { WorkoutPlanner } from './WorkoutPlanner'
@@ -21,7 +23,7 @@ import { createIndexedDbGymRepository } from './gymRepository'
 import { createGymService, type Gym, type GymService } from './gyms'
 import { createIndexedDbWorkoutRepository } from './workoutRepository'
 import { createIndexedDbSessionRepository } from './sessionRepository'
-import { createMemorySessionRepository, createSessionService, type SessionService, type WorkoutSession } from './sessions'
+import { createMemorySessionRepository, createSessionService, type CompletedWorkoutSession, type SessionService, type WorkoutSession } from './sessions'
 import { withWorkoutIntegrityLock } from './workoutIntegrity'
 import { createWorkoutService, type WorkoutService, type WorkoutTemplate } from './workouts'
 
@@ -29,7 +31,7 @@ const tabs = [
   { label: 'Home', icon: Home },
   { label: 'Train', icon: Dumbbell },
   { label: 'Plan', icon: CalendarDays },
-  { label: 'Progress', icon: BarChart3 },
+  { label: 'History', icon: BarChart3 },
   { label: 'Profile', icon: CircleUserRound },
 ] as const
 
@@ -61,6 +63,7 @@ export function App({
   const [selectedGym, setSelectedGym] = useState<Gym | null>(null)
   const [gymStatus, setGymStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null)
+  const [completedSession, setCompletedSession] = useState<CompletedWorkoutSession | null>(null)
   const [sessionTemplates, setSessionTemplates] = useState<WorkoutTemplate[]>([])
   const [isSessionOpen, setIsSessionOpen] = useState(false)
   const [sessionLoadError, setSessionLoadError] = useState('')
@@ -167,10 +170,17 @@ export function App({
   }, [activeTab, selectedGym, workoutService, templateReload])
 
   async function startSession(templateId: string) {
-    const session = await activeSessionService.start(templateId)
+    const session = await activeSessionService.start(templateId, selectedGym?.name)
     activeSessionRequest.current += 1
     setActiveSession(session)
     setIsSessionOpen(true)
+  }
+
+  function completeSession(session: CompletedWorkoutSession) {
+    activeSessionRequest.current += 1
+    setActiveSession(null)
+    setIsSessionOpen(false)
+    setCompletedSession(session)
   }
 
   function selectTab(index: number) {
@@ -213,8 +223,14 @@ export function App({
           <button className="avatar-button" aria-label="Open profile"><span aria-hidden="true">P</span></button>
         </header>
 
-        {activeTab === 0 && isSessionOpen && activeSession ? (
-          <ActiveSession initialSession={activeSession} sessionService={activeSessionService} onSessionChange={setActiveSession} />
+        {activeTab === 0 && completedSession ? (
+          <SessionSummary
+            session={completedSession}
+            onViewHistory={() => { setCompletedSession(null); selectTab(3) }}
+            onDone={() => setCompletedSession(null)}
+          />
+        ) : activeTab === 0 && isSessionOpen && activeSession ? (
+          <ActiveSession initialSession={activeSession} sessionService={activeSessionService} onSessionChange={setActiveSession} onComplete={completeSession} />
         ) : activeTab === 0 && isManagingGyms ? (
           <GymManager
             service={managedGymService}
@@ -241,6 +257,8 @@ export function App({
           <ExerciseLibrary service={exerciseService} />
         ) : activeTab === 2 ? (
           <WorkoutPlanner workoutService={workoutService} gymService={gymService} exerciseService={exerciseService} />
+        ) : activeTab === 3 ? (
+          <SessionHistory sessionService={activeSessionService} />
         ) : (
           <QuietPlaceholder title={current.label} labelledBy={`tab-${current.label.toLowerCase()}`} />
         )}

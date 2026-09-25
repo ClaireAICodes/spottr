@@ -9,6 +9,7 @@ export type SessionSet = {
   weight: number
   reps: number
   completedAt: string | null
+  skippedAt: string | null
 }
 
 export type SessionExercise = {
@@ -23,15 +24,33 @@ export type WorkoutSession = {
   templateId: string
   name: string
   gymId: string
+  gymName: string
   exercises: SessionExercise[]
   startedAt: string
   updatedAt: string
+}
+
+export type SessionSummary = {
+  completedExercises: number
+  skippedExercises: number
+  completedSets: number
+  skippedSets: number
+  volume: number
+  durationSeconds: number
+}
+
+export type CompletedWorkoutSession = WorkoutSession & {
+  endedAt: string
+  summary: SessionSummary
 }
 
 export interface SessionRepository {
   getActive(): Promise<WorkoutSession | null>
   createActive(session: WorkoutSession): Promise<boolean>
   updateActive(update: (session: WorkoutSession) => WorkoutSession): Promise<WorkoutSession>
+  completeActive(complete: (session: WorkoutSession) => CompletedWorkoutSession): Promise<CompletedWorkoutSession>
+  listHistory(): Promise<CompletedWorkoutSession[]>
+  getHistory(id: string): Promise<CompletedWorkoutSession | null>
   close?(): Promise<void>
 }
 
@@ -42,14 +61,19 @@ type SessionServiceOptions = {
   now?: () => string
 }
 
-function cloneSession(session: WorkoutSession): WorkoutSession {
-  return {
+function cloneSession<T extends WorkoutSession>(session: T): T {
+  const clone = {
     ...session,
     exercises: session.exercises.map((exercise) => ({
       ...exercise,
       sets: exercise.sets.map((set) => ({ ...set })),
     })),
+  } as T
+  if ('summary' in session) {
+    const summary = (session as unknown as CompletedWorkoutSession).summary
+    return { ...clone, summary: { ...summary } } as T
   }
+  return clone
 }
 
 export function createSessionService(
@@ -74,7 +98,7 @@ export function createSessionService(
       return session ? cloneSession(session) : null
     },
 
-    async start(templateId: string) {
+    async start(templateId: string, gymName = 'Saved gym') {
       return mutate(async () => {
         if (await repository.getActive()) throw new Error('Resume the active session before starting another workout')
         const template = await workoutService.get(templateId)
@@ -95,6 +119,7 @@ export function createSessionService(
               weight: set.weight,
               reps: set.reps,
               completedAt: null,
+              skippedAt: null,
             })),
           }
         }))
@@ -103,6 +128,7 @@ export function createSessionService(
           templateId: template.id,
           name: template.name,
           gymId: template.gymId,
+          gymName,
           exercises,
           startedAt: timestamp,
           updatedAt: timestamp,
@@ -142,11 +168,59 @@ export function createSessionService(
         return cloneSession(session)
       })
     },
+
+    async complete() {
+      return mutate(async () => {
+        const endedAt = now()
+        const completed = await repository.completeActive((current) => {
+          const exercises = current.exercises.map((exercise) => ({
+            ...exercise,
+            sets: exercise.sets.map((set) => set.completedAt
+              ? { ...set, skippedAt: null }
+              : { ...set, skippedAt: endedAt }),
+          }))
+          const sets = exercises.flatMap((exercise) => exercise.sets)
+          const completedSets = sets.filter((set) => set.completedAt)
+          const completedExercises = exercises.filter((exercise) => exercise.sets.some((set) => set.completedAt)).length
+          return {
+            ...current,
+            gymName: current.gymName || 'Saved gym',
+            exercises,
+            updatedAt: endedAt,
+            endedAt,
+            summary: {
+              completedExercises,
+              skippedExercises: exercises.length - completedExercises,
+              completedSets: completedSets.length,
+              skippedSets: sets.length - completedSets.length,
+              volume: completedSets.reduce((total, set) => total + (set.weight * set.reps), 0),
+              durationSeconds: Math.max(0, Math.floor((Date.parse(endedAt) - Date.parse(current.startedAt)) / 1000)),
+            },
+          }
+        })
+        return cloneSession(completed)
+      })
+    },
+
+    async listHistory() {
+      return (await repository.listHistory())
+        .sort((left, right) => right.endedAt.localeCompare(left.endedAt))
+        .map(cloneSession)
+    },
+
+    async getHistory(id: string) {
+      const session = await repository.getHistory(id)
+      return session ? cloneSession(session) : null
+    },
   }
 }
 
-export function createMemorySessionRepository(initialSession: WorkoutSession | null = null): SessionRepository {
+export function createMemorySessionRepository(
+  initialSession: WorkoutSession | null = null,
+  initialHistory: CompletedWorkoutSession[] = [],
+): SessionRepository {
   let active = initialSession ? cloneSession(initialSession) : null
+  const history = new Map(initialHistory.map((session) => [session.id, cloneSession(session)]))
   return {
     async getActive() {
       return active ? cloneSession(active) : null
@@ -160,6 +234,20 @@ export function createMemorySessionRepository(initialSession: WorkoutSession | n
       if (!active) throw new Error('No active session')
       active = cloneSession(update(cloneSession(active)))
       return cloneSession(active)
+    },
+    async completeActive(complete) {
+      if (!active) throw new Error('No active session')
+      const completed = complete(cloneSession(active))
+      history.set(completed.id, cloneSession(completed))
+      active = null
+      return cloneSession(completed)
+    },
+    async listHistory() {
+      return [...history.values()].map(cloneSession)
+    },
+    async getHistory(id) {
+      const session = history.get(id)
+      return session ? cloneSession(session) : null
     },
   }
 }

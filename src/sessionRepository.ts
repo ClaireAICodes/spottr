@@ -1,8 +1,9 @@
-import type { SessionRepository, WorkoutSession } from './sessions'
+import type { CompletedWorkoutSession, SessionRepository, WorkoutSession } from './sessions'
 
 const SESSION_DATABASE_VERSION = 1
 const SESSIONS_STORE = 'sessions'
 const ACTIVE_SESSION_KEY = 'active'
+const HISTORY_KEY_PREFIX = 'history:'
 
 function requestResult<T>(request: IDBRequest<T>) {
   return new Promise<T>((resolve, reject) => {
@@ -85,6 +86,44 @@ export function createIndexedDbSessionRepository(databaseName = 'spottr-v1-sessi
         transaction.onerror = () => reject(updateError ?? transaction.error ?? new Error('Local storage transaction failed'))
         transaction.onabort = () => reject(updateError ?? transaction.error ?? new Error('Local storage transaction was cancelled'))
       })
+    },
+    async completeActive(complete) {
+      const database = await openDatabase()
+      return new Promise<CompletedWorkoutSession>((resolve, reject) => {
+        const transaction = database.transaction(SESSIONS_STORE, 'readwrite')
+        const store = transaction.objectStore(SESSIONS_STORE)
+        const request = store.get(ACTIVE_SESSION_KEY)
+        let completed: CompletedWorkoutSession | null = null
+        let completionError: unknown
+        request.onsuccess = () => {
+          try {
+            if (!request.result) throw new Error('No active session')
+            completed = complete(request.result as WorkoutSession)
+            store.put(completed, `${HISTORY_KEY_PREFIX}${completed.id}`)
+            store.delete(ACTIVE_SESSION_KEY)
+          } catch (error) {
+            completionError = error
+            transaction.abort()
+          }
+        }
+        request.onerror = () => reject(request.error ?? new Error('Local storage request failed'))
+        transaction.oncomplete = () => {
+          if (completed) resolve(completed)
+        }
+        transaction.onerror = () => reject(completionError ?? transaction.error ?? new Error('Local storage transaction failed'))
+        transaction.onabort = () => reject(completionError ?? transaction.error ?? new Error('Local storage transaction was cancelled'))
+      })
+    },
+    async listHistory() {
+      const database = await openDatabase()
+      const results = await requestResult(database.transaction(SESSIONS_STORE).objectStore(SESSIONS_STORE).getAll())
+      return (results as Array<WorkoutSession | CompletedWorkoutSession>)
+        .filter((session): session is CompletedWorkoutSession => 'endedAt' in session)
+    },
+    async getHistory(id) {
+      const database = await openDatabase()
+      const result = await requestResult(database.transaction(SESSIONS_STORE).objectStore(SESSIONS_STORE).get(`${HISTORY_KEY_PREFIX}${id}`))
+      return (result as CompletedWorkoutSession | undefined) ?? null
     },
     async close() {
       if (!databasePromise) return

@@ -1,16 +1,18 @@
-import { useState } from 'react'
-import { Check, Dumbbell } from 'lucide-react'
-import { Panel } from './primitives'
-import type { SessionService, WorkoutSession } from './sessions'
+import { useEffect, useRef, useState } from 'react'
+import { Check, Dumbbell, Flag } from 'lucide-react'
+import { ActionButton, Panel } from './primitives'
+import type { CompletedWorkoutSession, SessionService, WorkoutSession } from './sessions'
 
 export function ActiveSession({
   initialSession,
   sessionService,
   onSessionChange,
+  onComplete,
 }: {
   initialSession: WorkoutSession
   sessionService: SessionService
   onSessionChange: (session: WorkoutSession) => void
+  onComplete: (session: CompletedWorkoutSession) => void
 }) {
   const [session, setSession] = useState(initialSession)
   const [values, setValues] = useState(() => Object.fromEntries(
@@ -20,9 +22,41 @@ export function ActiveSession({
     ])),
   ))
   const [pendingSetIds, setPendingSetIds] = useState<Set<string>>(() => new Set())
+  const [isConfirmingFinish, setIsConfirmingFinish] = useState(false)
+  const [isFinishing, setIsFinishing] = useState(false)
+  const finishButton = useRef<HTMLButtonElement>(null)
+  const keepTrainingButton = useRef<HTMLButtonElement>(null)
+  const confirmFinishButton = useRef<HTMLButtonElement>(null)
   const [error, setError] = useState('')
   const allSets = session.exercises.flatMap((exercise) => exercise.sets)
   const completedSets = allSets.filter(({ completedAt }) => completedAt).length
+  const remainingSets = allSets.length - completedSets
+
+  useEffect(() => {
+    if (isConfirmingFinish) keepTrainingButton.current?.focus()
+  }, [isConfirmingFinish])
+
+  function closeFinishDialog() {
+    if (isFinishing) return
+    setIsConfirmingFinish(false)
+    queueMicrotask(() => finishButton.current?.focus())
+  }
+
+  function handleFinishDialogKeyDown(event: React.KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeFinishDialog()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = [keepTrainingButton.current, confirmFinishButton.current].filter(Boolean) as HTMLButtonElement[]
+    const currentIndex = focusable.indexOf(document.activeElement as HTMLButtonElement)
+    const nextIndex = event.shiftKey
+      ? (currentIndex - 1 + focusable.length) % focusable.length
+      : (currentIndex + 1) % focusable.length
+    event.preventDefault()
+    focusable[nextIndex].focus()
+  }
 
   async function logSet(exerciseId: string, setId: string) {
     const draft = values[setId]
@@ -47,6 +81,21 @@ export function ActiveSession({
         next.delete(setId)
         return next
       })
+    }
+  }
+
+  async function finish() {
+    if (isFinishing) return
+    setIsFinishing(true)
+    setError('')
+    try {
+      onComplete(await sessionService.complete())
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The workout could not be finished.')
+      setIsConfirmingFinish(false)
+      queueMicrotask(() => finishButton.current?.focus())
+    } finally {
+      setIsFinishing(false)
     }
   }
 
@@ -84,6 +133,24 @@ export function ActiveSession({
           </Panel>
         ))}
       </div>
+      <div className="finish-session">
+        <ActionButton ref={finishButton} disabled={pendingSetIds.size > 0 || isFinishing} onClick={() => remainingSets > 0 ? setIsConfirmingFinish(true) : void finish()}>
+          <Flag size={18} aria-hidden="true" /> Finish workout
+        </ActionButton>
+        <p>{remainingSets > 0 ? `${remainingSets} unfinished ${remainingSets === 1 ? 'set' : 'sets'} will be saved as skipped.` : 'Every planned set is logged.'}</p>
+      </div>
+      {isConfirmingFinish && (
+        <div className="dialog-backdrop">
+          <div role="dialog" aria-modal="true" aria-labelledby="finish-title" className="confirm-dialog" onKeyDown={handleFinishDialogKeyDown}>
+            <h3 id="finish-title">Finish this workout?</h3>
+            <p>Your {remainingSets} unfinished {remainingSets === 1 ? 'set' : 'sets'} will be saved as skipped. Logged work stays unchanged.</p>
+            <div className="form-actions">
+              <button ref={keepTrainingButton} type="button" className="text-button" disabled={isFinishing} onClick={closeFinishDialog}>Keep training</button>
+              <ActionButton ref={confirmFinishButton} disabled={isFinishing} onClick={() => void finish()}>{isFinishing ? 'Saving…' : `Finish and skip ${remainingSets} ${remainingSets === 1 ? 'set' : 'sets'}`}</ActionButton>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

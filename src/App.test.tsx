@@ -20,7 +20,7 @@ describe('Spottr application shell', () => {
       expect.stringContaining('Home'),
       expect.stringContaining('Train'),
       expect.stringContaining('Plan'),
-      expect.stringContaining('Progress'),
+      expect.stringContaining('History'),
       expect.stringContaining('Profile'),
     ])
     expect(screen.getByRole('tab', { name: /home/i })).toHaveAttribute('aria-selected', 'true')
@@ -661,6 +661,62 @@ describe('workout template journey', () => {
 })
 
 describe('active workout session journey', () => {
+  it('finishes a partial workout, shows its summary, and restores set-level history after reload', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'North Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Back Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    await workoutService.create({
+      name: 'Lower Strength',
+      gymId: gym.id,
+      exercises: [{
+        exerciseId: squat.id,
+        sets: [
+          { kind: 'working', weight: 80, reps: 5 },
+          { kind: 'working', weight: 82.5, reps: 5 },
+        ],
+      }],
+    })
+    const timestamps = ['2026-09-25T01:00:00.000Z', '2026-09-25T01:15:00.000Z', '2026-09-25T02:00:00.000Z']
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService, {
+      now: () => timestamps.shift()!,
+    })
+    const firstRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+
+    await user.click(await screen.findByRole('button', { name: /start workout at north gym/i }))
+    await user.click(screen.getByRole('button', { name: /start lower strength/i }))
+    await user.click(screen.getByRole('button', { name: /log back squat set 1/i }))
+    const finishWorkout = screen.getByRole('button', { name: /finish workout/i })
+    await user.click(finishWorkout)
+    expect(screen.getByRole('button', { name: /keep training/i })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(finishWorkout).toHaveFocus()
+    await user.click(finishWorkout)
+    await user.click(screen.getByRole('button', { name: /finish and skip 1 set/i }))
+
+    expect(await screen.findByRole('heading', { name: /workout saved/i })).toBeInTheDocument()
+    expect(screen.getByText('400 kg')).toBeInTheDocument()
+    expect(screen.getByText('1 set completed')).toBeInTheDocument()
+    expect(screen.getByText('1 set skipped')).toBeInTheDocument()
+    expect(screen.getByText(/personal records.*coming next/i)).toBeInTheDocument()
+    expect(screen.getByText(/future targets.*coming next/i)).toBeInTheDocument()
+    expect(await sessionService.getActive()).toBeNull()
+
+    firstRender.unmount()
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+    await user.click(screen.getByRole('tab', { name: /history/i }))
+    const historyItem = await screen.findByRole('article', { name: /lower strength/i })
+    expect(historyItem).toHaveTextContent('North Gym')
+    expect(historyItem).toHaveTextContent('400 kg')
+    await user.click(within(historyItem).getByRole('button', { name: /view details/i }))
+    expect(screen.getByText(/80 kg × 5 reps/i)).toBeInTheDocument()
+    const skippedSet = screen.getByText(/82.5 kg × 5 reps/i).closest('li')!
+    expect(within(skippedSet).getByText('Skipped')).toBeInTheDocument()
+  })
+
   it('wires the active session to injected workout and exercise services by default', async () => {
     const user = userEvent.setup()
     const gymService = createGymService(createMemoryGymRepository())
