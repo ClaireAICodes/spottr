@@ -48,7 +48,7 @@ export interface SessionRepository {
   getActive(): Promise<WorkoutSession | null>
   createActive(session: WorkoutSession): Promise<boolean>
   updateActive(update: (session: WorkoutSession) => WorkoutSession): Promise<WorkoutSession>
-  completeActive(complete: (session: WorkoutSession) => CompletedWorkoutSession): Promise<CompletedWorkoutSession>
+  completeActive(expectedSessionId: string, complete: (session: WorkoutSession) => CompletedWorkoutSession): Promise<CompletedWorkoutSession>
   listHistory(): Promise<CompletedWorkoutSession[]>
   getHistory(id: string): Promise<CompletedWorkoutSession | null>
   close?(): Promise<void>
@@ -178,7 +178,8 @@ export function createSessionService(
         const restoredGymName = active && !active.gymName && resolveGymName
           ? await resolveGymName(active.gymId)
           : null
-        const completed = await repository.completeActive((current) => {
+        if (!active) throw new Error('No active session')
+        const completed = await repository.completeActive(active.id, (current) => {
           const exercises = current.exercises.map((exercise) => ({
             ...exercise,
             sets: exercise.sets.map((set) => set.completedAt
@@ -241,8 +242,9 @@ export function createMemorySessionRepository(
       active = cloneSession(update(cloneSession(active)))
       return cloneSession(active)
     },
-    async completeActive(complete) {
+    async completeActive(expectedSessionId, complete) {
       if (!active) throw new Error('No active session')
+      if (active.id !== expectedSessionId) throw new Error('Active session changed before completion')
       const completed = complete(cloneSession(active))
       history.set(completed.id, cloneSession(completed))
       active = null

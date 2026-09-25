@@ -89,6 +89,51 @@ describe('active workout session service', () => {
     expect(completed.gymName).toBe('North Gym')
   })
 
+  it('rejects delayed legacy completion when another caller replaces the active session', async () => {
+    const context = await createTrainingContext()
+    const seedService = createSessionService(createMemorySessionRepository(), context.workoutService, context.exerciseService, {
+      createId: () => 'original-session',
+      now: () => '2026-09-24T13:15:00.000Z',
+    })
+    const started = await seedService.start(context.template.id)
+    const { gymName: _legacyMissingGymName, ...legacySession } = started
+    const databaseName = `spottr-session-completion-race-${crypto.randomUUID()}`
+    const delayedRepository = createIndexedDbSessionRepository(databaseName)
+    const competingRepository = createIndexedDbSessionRepository(databaseName)
+    await delayedRepository.createActive(legacySession as WorkoutSession)
+    let confirmGymLookupStarted!: () => void
+    const gymLookupStarted = new Promise<void>((resolve) => {
+      confirmGymLookupStarted = resolve
+    })
+    let resumeGymLookup!: (gymName: string | null) => void
+    const delayedGymName = new Promise<string | null>((resolve) => {
+      resumeGymLookup = resolve
+    })
+    const delayedService = createSessionService(delayedRepository, context.workoutService, context.exerciseService, {
+      now: () => '2026-09-24T14:15:00.000Z',
+      resolveGymName: () => {
+        confirmGymLookupStarted()
+        return delayedGymName
+      },
+    })
+    const competingService = createSessionService(competingRepository, context.workoutService, context.exerciseService, {
+      createId: () => 'replacement-session',
+      now: () => '2026-09-24T14:16:00.000Z',
+    })
+
+    const delayedCompletion = delayedService.complete()
+    await gymLookupStarted
+    await competingService.complete()
+    const replacement = await competingService.start(context.template.id, context.gym.name)
+    resumeGymLookup(context.gym.name)
+
+    await expect(delayedCompletion).rejects.toThrow('Active session changed before completion')
+    expect(await competingService.getActive()).toEqual(replacement)
+    await delayedRepository.close?.()
+    await competingRepository.close?.()
+    indexedDB.deleteDatabase(databaseName)
+  })
+
   it('starts an independent snapshot and resumes logged sets without mutating the template', async () => {
     const context = await createTrainingContext()
     const repository = createMemorySessionRepository()

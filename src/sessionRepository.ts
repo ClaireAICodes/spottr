@@ -87,7 +87,7 @@ export function createIndexedDbSessionRepository(databaseName = 'spottr-v1-sessi
         transaction.onabort = () => reject(updateError ?? transaction.error ?? new Error('Local storage transaction was cancelled'))
       })
     },
-    async completeActive(complete) {
+    async completeActive(expectedSessionId, complete) {
       const database = await openDatabase()
       return new Promise<CompletedWorkoutSession>((resolve, reject) => {
         const transaction = database.transaction(SESSIONS_STORE, 'readwrite')
@@ -98,7 +98,9 @@ export function createIndexedDbSessionRepository(databaseName = 'spottr-v1-sessi
         request.onsuccess = () => {
           try {
             if (!request.result) throw new Error('No active session')
-            completed = complete(request.result as WorkoutSession)
+            const active = request.result as WorkoutSession
+            if (active.id !== expectedSessionId) throw new Error('Active session changed before completion')
+            completed = complete(active)
             store.put(completed, `${HISTORY_KEY_PREFIX}${completed.id}`)
             store.delete(ACTIVE_SESSION_KEY)
           } catch (error) {
