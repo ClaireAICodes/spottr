@@ -59,6 +59,7 @@ export type SessionService = ReturnType<typeof createSessionService>
 type SessionServiceOptions = {
   createId?: () => string
   now?: () => string
+  resolveGymName?: (gymId: string) => Promise<string | null>
 }
 
 function cloneSession<T extends WorkoutSession>(session: T): T {
@@ -84,6 +85,7 @@ export function createSessionService(
 ) {
   const createId = options.createId ?? (() => crypto.randomUUID())
   const now = options.now ?? (() => new Date().toISOString())
+  const resolveGymName = options.resolveGymName
   let mutationQueue: Promise<void> = Promise.resolve()
 
   function mutate<T>(operation: () => Promise<T>) {
@@ -172,6 +174,10 @@ export function createSessionService(
     async complete() {
       return mutate(async () => {
         const endedAt = now()
+        const active = await repository.getActive()
+        const restoredGymName = active && !active.gymName && resolveGymName
+          ? await resolveGymName(active.gymId)
+          : null
         const completed = await repository.completeActive((current) => {
           const exercises = current.exercises.map((exercise) => ({
             ...exercise,
@@ -184,7 +190,7 @@ export function createSessionService(
           const completedExercises = exercises.filter((exercise) => exercise.sets.some((set) => set.completedAt)).length
           return {
             ...current,
-            gymName: current.gymName || 'Saved gym',
+            gymName: current.gymName || (current.gymId === active?.gymId ? restoredGymName : null) || 'Saved gym',
             exercises,
             updatedAt: endedAt,
             endedAt,

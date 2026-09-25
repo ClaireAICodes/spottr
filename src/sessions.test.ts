@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { createExerciseService, createMemoryExerciseRepository } from './exercises'
 import { createGymService, createMemoryGymRepository } from './gyms'
 import { createIndexedDbSessionRepository } from './sessionRepository'
-import { createMemorySessionRepository, createSessionService } from './sessions'
+import { createMemorySessionRepository, createSessionService, type WorkoutSession } from './sessions'
 import { createMemoryWorkoutRepository, createWorkoutService } from './workouts'
 
 async function createTrainingContext() {
@@ -26,7 +26,7 @@ async function createTrainingContext() {
       { exerciseId: row.id, sets: [{ kind: 'working', weight: 45, reps: 10 }] },
     ],
   })
-  return { gym, exerciseService, workoutService, template }
+  return { gym, gymService, exerciseService, workoutService, template }
 }
 
 describe('active workout session service', () => {
@@ -69,6 +69,24 @@ describe('active workout session service', () => {
     const listed = await service.listHistory()
     listed[0].summary.volume = 888
     expect((await service.getHistory(completed.id))?.summary.volume).toBe(202.5)
+  })
+
+  it('preserves the gym name when completing a baseline-format active session', async () => {
+    const context = await createTrainingContext()
+    const seedService = createSessionService(createMemorySessionRepository(), context.workoutService, context.exerciseService, {
+      now: () => '2026-09-24T13:15:00.000Z',
+    })
+    const started = await seedService.start(context.template.id)
+    const { gymName: _legacyMissingGymName, ...legacySession } = started
+    const repository = createMemorySessionRepository(legacySession as WorkoutSession)
+    const service = createSessionService(repository, context.workoutService, context.exerciseService, {
+      now: () => '2026-09-24T14:15:00.000Z',
+      resolveGymName: async (gymId) => (await context.gymService.get(gymId))?.name ?? null,
+    })
+
+    const completed = await service.complete()
+
+    expect(completed.gymName).toBe('North Gym')
   })
 
   it('starts an independent snapshot and resumes logged sets without mutating the template', async () => {

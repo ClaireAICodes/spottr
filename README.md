@@ -1,6 +1,6 @@
 # Spottr W39 — Local-first training foundation
 
-A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profiles 2A–2D, the shared exercise library 3A–3D, ordered exercise media 4A–4D, workout templates/integrity 5A–6D, and active-session execution 7A–7D:
+A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profiles 2A–2D, the shared exercise library 3A–3D, ordered exercise media 4A–4D, workout templates/integrity 5A–6D, active-session execution 7A–7D, and completion/history 9A–9D:
 
 - Vite + React + TypeScript scaffold and Vitest/Playwright harness
 - original design tokens and reusable panel/action/status primitives
@@ -16,6 +16,7 @@ A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profi
 - confirmed template deletion and protection against deleting gyms that still own templates
 - global shared-exercise edits propagate through references while variations, copies, and removed templates stay isolated
 - independent workout snapshots with fast set logging, reload, resume, and template non-mutation
+- partial-workout completion summaries and durable newest-first set-by-set history
 - offline reload support for previously loaded local app resources and exercise data
 - responsive layouts verified at 390×844, the populated workout editor at 393×844, and 1440×900
 
@@ -34,7 +35,7 @@ Focus a primary tab, then use Left/Right or Up/Down to move. Home/End jump to th
 
 ## Scope boundary
 
-This checkpoint includes the bounded active-session start, fast-log, reload, and resume slice. Session completion/history, adding or removing exercises/sets during execution, substitutions, free-form sessions, timers, and richer execution controls remain deferred to the original flexible-execution envelope. Release, push, and deployment are excluded.
+This checkpoint includes the bounded active-session start, fast-log, reload, resume, partial completion, summary, and durable history slices. Adding or removing exercises/sets during execution, substitutions, free-form sessions, timers, and richer execution controls remain deferred to the original flexible-execution envelope. Release, push, and deployment are excluded.
 
 ## Evidence
 
@@ -48,6 +49,7 @@ This checkpoint includes the bounded active-session start, fast-log, reload, and
 - `evidence/workout-template-verification.md`
 - `evidence/screenshots/spottr-workouts-393x844.png`
 - `evidence/screenshots/spottr-active-session-390x844.png`
+- `evidence/screenshots/spottr-completion-history-390x844.png`
 - `evidence/active-session-verification.md`
 - `evidence/no-w38-reuse-proof.md`
 - `evidence/verification.md`

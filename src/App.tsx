@@ -45,6 +45,7 @@ const defaultSessionService = createSessionService(
   createIndexedDbSessionRepository(),
   defaultWorkoutService,
   defaultExerciseService,
+  { resolveGymName: async (id) => (await defaultGymService.get(id))?.name ?? null },
 )
 
 export function App({
@@ -90,8 +91,10 @@ export function App({
   const activeSessionService = useMemo(() => sessionService ?? (
     workoutService === defaultWorkoutService && exerciseService === defaultExerciseService
       ? defaultSessionService
-      : createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
-  ), [exerciseService, sessionService, workoutService])
+      : createSessionService(createMemorySessionRepository(), workoutService, exerciseService, {
+          resolveGymName: async (id) => (await gymService.get(id))?.name ?? null,
+        })
+  ), [exerciseService, gymService, sessionService, workoutService])
 
   useEffect(() => {
     if (!window.matchMedia) return
