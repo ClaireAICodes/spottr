@@ -551,6 +551,48 @@ describe('active workout session service', () => {
     expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('accepted')
   })
 
+  it('restores the prior target when acceptance recovery cannot finalize history', async () => {
+    const context = await createTrainingContext()
+    const baseRepository = createMemorySessionRepository()
+    const seedService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const active = await seedService.start(context.template.id)
+    const sessionSet = active.exercises[0].sets[0]
+    await seedService.logSet(active.exercises[0].id, sessionSet.id, { weight: 25, reps: 9 })
+    const completed = await seedService.complete()
+    await baseRepository.updateHistory(completed.id, (current) => ({
+      ...current,
+      exercises: current.exercises.map((exercise) => exercise.id === active.exercises[0].id
+        ? {
+            ...exercise,
+            sets: exercise.sets.map((set) => set.id === sessionSet.id
+              ? {
+                  ...set,
+                  targetDecision: 'accepting' as const,
+                  targetDecisionPreviousTarget: { weight: 20, reps: 10 },
+                }
+              : set),
+          }
+        : exercise),
+    }))
+    const failingRepository = {
+      ...baseRepository,
+      async updateHistory() {
+        throw new Error('recovery finalization failed')
+      },
+    }
+
+    await expect(createSessionService(failingRepository, context.workoutService, context.exerciseService)
+      .start(context.template.id)).rejects.toThrow('recovery finalization failed')
+
+    expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0])
+      .toMatchObject({ weight: 20, reps: 10 })
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0])
+      .toMatchObject({
+        targetDecision: 'accepting',
+        targetDecisionPreviousTarget: { weight: 20, reps: 10 },
+      })
+  })
+
   it('preserves an interrupted acceptance when retry finalization fails so it can still be declined', async () => {
     const context = await createTrainingContext()
     const baseRepository = createMemorySessionRepository()
@@ -565,7 +607,11 @@ describe('active workout session service', () => {
         ? {
             ...exercise,
             sets: exercise.sets.map((set) => set.id === sessionSet.id
-              ? { ...set, targetDecision: 'accepting' }
+              ? {
+                  ...set,
+                  targetDecision: 'accepting' as const,
+                  targetDecisionPreviousTarget: { weight: 20, reps: 10 },
+                }
               : set),
           }
         : exercise),
@@ -596,6 +642,8 @@ describe('active workout session service', () => {
       'accept',
     )).rejects.toThrow('history finalization failed')
 
+    expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0])
+      .toMatchObject({ weight: 20, reps: 10 })
     expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('accepting')
 
     const declineService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
@@ -610,6 +658,106 @@ describe('active workout session service', () => {
       .toMatchObject({ weight: 20, reps: 10 })
     expect(declined.exercises[0].sets[0].targetDecision).toBe('declined')
     expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('declined')
+  })
+
+  it('recovers a failed decline without converting it back into acceptance', async () => {
+    const context = await createTrainingContext()
+    const baseRepository = createMemorySessionRepository()
+    const seedService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const active = await seedService.start(context.template.id)
+    const sessionSet = active.exercises[0].sets[0]
+    await seedService.logSet(active.exercises[0].id, sessionSet.id, { weight: 25, reps: 9 })
+    const completed = await seedService.complete()
+    await baseRepository.updateHistory(completed.id, (current) => ({
+      ...current,
+      exercises: current.exercises.map((exercise) => exercise.id === active.exercises[0].id
+        ? {
+            ...exercise,
+            sets: exercise.sets.map((set) => set.id === sessionSet.id
+              ? {
+                  ...set,
+                  targetDecision: 'accepting' as const,
+                  targetDecisionPreviousTarget: { weight: 20, reps: 10 },
+                }
+              : set),
+          }
+        : exercise),
+    }))
+    await context.workoutService.updateSetTarget(
+      context.template.id,
+      context.template.exercises[0].id,
+      context.template.exercises[0].sets[0].id,
+      { weight: 25, reps: 9 },
+    )
+    let failDeclineFinalization = true
+    const failingRepository = {
+      ...baseRepository,
+      async updateHistory(...args: Parameters<typeof baseRepository.updateHistory>) {
+        const current = await baseRepository.getHistory(args[0])
+        const updated = current ? args[1](current) : null
+        const decision = updated?.exercises[0].sets[0].targetDecision
+        if (failDeclineFinalization && decision === 'declined') {
+          failDeclineFinalization = false
+          throw new Error('decline finalization failed')
+        }
+        return baseRepository.updateHistory(...args)
+      },
+    }
+    const service = createSessionService(failingRepository, context.workoutService, context.exerciseService)
+
+    await expect(service.decideFutureTarget(
+      completed.id,
+      active.exercises[0].id,
+      sessionSet.id,
+      'decline',
+    )).rejects.toThrow('decline finalization failed')
+
+    const recoveredService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const next = await recoveredService.start(context.template.id)
+    expect(next.exercises[0].sets[0]).toMatchObject({ targetWeight: 20, targetReps: 10 })
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('declined')
+  })
+
+  it('declines an interrupted acceptance to the exact target captured before acceptance', async () => {
+    const context = await createTrainingContext()
+    const baseRepository = createMemorySessionRepository()
+    const seedService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const active = await seedService.start(context.template.id)
+    const sessionSet = active.exercises[0].sets[0]
+    await seedService.logSet(active.exercises[0].id, sessionSet.id, { weight: 25, reps: 9 })
+    const completed = await seedService.complete()
+    await context.workoutService.updateSetTarget(
+      context.template.id,
+      context.template.exercises[0].id,
+      context.template.exercises[0].sets[0].id,
+      { weight: 22.5, reps: 8 },
+    )
+    let historyWrites = 0
+    const interruptedRepository = {
+      ...baseRepository,
+      async updateHistory(...args: Parameters<typeof baseRepository.updateHistory>) {
+        historyWrites += 1
+        if (historyWrites > 1) throw new Error('history storage unavailable')
+        return baseRepository.updateHistory(...args)
+      },
+    }
+
+    await expect(createSessionService(interruptedRepository, context.workoutService, context.exerciseService)
+      .decideFutureTarget(completed.id, active.exercises[0].id, sessionSet.id, 'accept'))
+      .rejects.toThrow('Future target acceptance failed and could not be fully rolled back')
+
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0])
+      .toMatchObject({
+        targetDecision: 'accepting',
+        targetDecisionPreviousTarget: { weight: 22.5, reps: 8 },
+      })
+
+    const declined = await createSessionService(baseRepository, context.workoutService, context.exerciseService)
+      .decideFutureTarget(completed.id, active.exercises[0].id, sessionSet.id, 'decline')
+
+    expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0])
+      .toMatchObject({ weight: 22.5, reps: 8 })
+    expect(declined.exercises[0].sets[0].targetDecision).toBe('declined')
   })
 
   it('reverts the template target when accept fails during history finalization and user then declines', async () => {
@@ -691,6 +839,49 @@ describe('active workout session service', () => {
     expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0])
       .toMatchObject({ weight: 22.5, reps: 8 })
     expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBeUndefined()
+  })
+
+  it('keeps rollback state durable when a failed acceptance cannot restore the template', async () => {
+    const context = await createTrainingContext()
+    const baseRepository = createMemorySessionRepository()
+    const seedService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const active = await seedService.start(context.template.id)
+    const sessionSet = active.exercises[0].sets[0]
+    await seedService.logSet(active.exercises[0].id, sessionSet.id, { weight: 25, reps: 9 })
+    const completed = await seedService.complete()
+    let historyWrites = 0
+    const failingRepository = {
+      ...baseRepository,
+      async updateHistory(...args: Parameters<typeof baseRepository.updateHistory>) {
+        historyWrites += 1
+        if (historyWrites === 2) throw new Error('history finalization failed')
+        return baseRepository.updateHistory(...args)
+      },
+    }
+    let targetUpdates = 0
+    const failingWorkoutService = {
+      ...context.workoutService,
+      async updateSetTarget(...args: Parameters<typeof context.workoutService.updateSetTarget>) {
+        targetUpdates += 1
+        if (targetUpdates === 2) throw new Error('template rollback failed')
+        return context.workoutService.updateSetTarget(...args)
+      },
+    }
+
+    await expect(createSessionService(failingRepository, failingWorkoutService, context.exerciseService)
+      .decideFutureTarget(completed.id, active.exercises[0].id, sessionSet.id, 'accept'))
+      .rejects.toThrow('Future target acceptance failed and could not be fully rolled back')
+
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0])
+      .toMatchObject({
+        targetDecision: 'accepting',
+        targetDecisionPreviousTarget: { weight: 20, reps: 10 },
+      })
+    const declined = await createSessionService(baseRepository, context.workoutService, context.exerciseService)
+      .decideFutureTarget(completed.id, active.exercises[0].id, sessionSet.id, 'decline')
+    expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0])
+      .toMatchObject({ weight: 20, reps: 10 })
+    expect(declined.exercises[0].sets[0].targetDecision).toBe('declined')
   })
 
   it('clears the pending acceptance when the template update fails', async () => {

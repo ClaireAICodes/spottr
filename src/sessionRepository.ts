@@ -31,8 +31,13 @@ function isSessionSet(value: unknown) {
       && value.personalRecords.every((record) => record === 'weight' || record === 'set-volume')))
     && (value.targetDecision === undefined
       || value.targetDecision === 'accepting'
+      || value.targetDecision === 'declining'
       || value.targetDecision === 'accepted'
       || value.targetDecision === 'declined')
+    && (value.targetDecisionPreviousTarget === undefined
+      || (isRecord(value.targetDecisionPreviousTarget)
+        && typeof value.targetDecisionPreviousTarget.weight === 'number'
+        && typeof value.targetDecisionPreviousTarget.reps === 'number'))
 }
 
 function isSessionExercise(value: unknown) {

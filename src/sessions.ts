@@ -12,7 +12,8 @@ export type SessionSet = {
   completedAt: string | null
   skippedAt: string | null
   personalRecords?: Array<'weight' | 'set-volume'>
-  targetDecision?: 'accepting' | 'accepted' | 'declined'
+  targetDecision?: 'accepting' | 'declining' | 'accepted' | 'declined'
+  targetDecisionPreviousTarget?: { weight: number; reps: number }
 }
 
 export type SessionExercise = {
@@ -75,6 +76,9 @@ function cloneSession<T extends WorkoutSession>(session: T): T {
       sets: exercise.sets.map((set) => ({
         ...set,
         personalRecords: set.personalRecords ? [...set.personalRecords] : undefined,
+        targetDecisionPreviousTarget: set.targetDecisionPreviousTarget
+          ? { ...set.targetDecisionPreviousTarget }
+          : undefined,
       })),
     })),
   } as T
@@ -144,13 +148,22 @@ export function createSessionService(
     sessionExerciseId: string,
     setId: string,
     targetDecision: SessionSet['targetDecision'],
+    previousTarget?: SessionSet['targetDecisionPreviousTarget'],
   ) {
     return repository.updateHistory(sessionId, (current) => ({
       ...current,
       exercises: current.exercises.map((exercise) => exercise.id === sessionExerciseId
         ? {
             ...exercise,
-            sets: exercise.sets.map((set) => set.id === setId ? { ...set, targetDecision } : set),
+            sets: exercise.sets.map((set) => {
+              if (set.id !== setId) return set
+              const { targetDecisionPreviousTarget: _previousTarget, ...setWithoutPreviousTarget } = set
+              return {
+                ...setWithoutPreviousTarget,
+                targetDecision,
+                ...(previousTarget ? { targetDecisionPreviousTarget: { ...previousTarget } } : {}),
+              }
+            }),
           }
         : exercise),
     }))
@@ -161,18 +174,42 @@ export function createSessionService(
     for (const completed of history) {
       for (const exercise of completed.exercises) {
         for (const set of exercise.sets) {
-          if (set.targetDecision !== 'accepting') continue
+          if (set.targetDecision !== 'accepting' && set.targetDecision !== 'declining') continue
           if (!exercise.templateExerciseId || !set.templateSetId) throw new Error('The original workout set is no longer available')
+          const isDeclining = set.targetDecision === 'declining'
+          const target = isDeclining
+            ? set.targetDecisionPreviousTarget ?? { weight: set.targetWeight, reps: set.targetReps }
+            : { weight: set.weight, reps: set.reps }
           await workoutService.updateSetTarget(completed.templateId, exercise.templateExerciseId, set.templateSetId, {
-            weight: set.weight,
-            reps: set.reps,
+            weight: target.weight,
+            reps: target.reps,
           })
-          await repository.updateHistory(completed.id, (current) => ({
-            ...current,
-            exercises: current.exercises.map((item) => item.id === exercise.id
-              ? { ...item, sets: item.sets.map((target) => target.id === set.id ? { ...target, targetDecision: 'accepted' } : target) }
-              : item),
-          }))
+          try {
+            await updateTargetDecision(
+              completed.id,
+              exercise.id,
+              set.id,
+              isDeclining ? 'declined' : 'accepted',
+            )
+          } catch (error) {
+            if (isDeclining) throw error
+            const previousTarget = set.targetDecisionPreviousTarget
+              ?? { weight: set.targetWeight, reps: set.targetReps }
+            try {
+              await workoutService.updateSetTarget(
+                completed.templateId,
+                exercise.templateExerciseId,
+                set.templateSetId,
+                previousTarget,
+              )
+            } catch (rollbackError) {
+              throw new AggregateError(
+                [error, rollbackError],
+                'Future target acceptance recovery failed and could not restore the template',
+              )
+            }
+            throw error
+          }
         }
       }
     }
@@ -345,6 +382,9 @@ export function createSessionService(
         if (set.weight === set.targetWeight && set.reps === set.targetReps) {
           throw new Error('This set already matches its future target')
         }
+        if (set.targetDecision === 'declining' && decision === 'accept') {
+          throw new Error('This future target decline is still being finalized')
+        }
         if (decision === 'accept') {
           if (!exercise.templateExerciseId || !set.templateSetId) throw new Error('The original workout set is no longer available')
           const currentTemplate = await workoutService.get(completed.templateId)
@@ -352,10 +392,12 @@ export function createSessionService(
             .find(({ id }) => id === exercise.templateExerciseId)
             ?.sets.find(({ id }) => id === set.templateSetId)
           if (!currentTemplateSet) throw new Error('The original workout set is no longer available')
-          const previousTarget = { weight: currentTemplateSet.weight, reps: currentTemplateSet.reps }
           const isAcceptanceRetry = set.targetDecision === 'accepting'
+          const previousTarget = isAcceptanceRetry
+            ? set.targetDecisionPreviousTarget ?? { weight: set.targetWeight, reps: set.targetReps }
+            : { weight: currentTemplateSet.weight, reps: currentTemplateSet.reps }
           if (!isAcceptanceRetry) {
-            await updateTargetDecision(sessionId, sessionExerciseId, setId, 'accepting')
+            await updateTargetDecision(sessionId, sessionExerciseId, setId, 'accepting', previousTarget)
           }
           try {
             await workoutService.updateSetTarget(
@@ -366,30 +408,46 @@ export function createSessionService(
             )
             return cloneSession(await updateTargetDecision(sessionId, sessionExerciseId, setId, 'accepted'))
           } catch (error) {
-            if (isAcceptanceRetry) throw error
+            const rollbackErrors: unknown[] = []
+            let templateRestored = false
+            // The template and history use separate stores, so compensate any
+            // partial template write before returning from a failed finalization.
             try {
-              // The template and history use separate stores, so compensate any
-              // partial template write before clearing the durable intent marker.
               await workoutService.updateSetTarget(
                 completed.templateId,
                 exercise.templateExerciseId,
                 set.templateSetId,
                 previousTarget,
               )
-              await updateTargetDecision(sessionId, sessionExerciseId, setId, undefined)
+              templateRestored = true
             } catch (rollbackError) {
-              throw new AggregateError([error, rollbackError], 'Future target acceptance failed and could not be fully rolled back')
+              rollbackErrors.push(rollbackError)
+            }
+            if (!isAcceptanceRetry && templateRestored) {
+              try {
+                await updateTargetDecision(sessionId, sessionExerciseId, setId, undefined)
+              } catch (rollbackError) {
+                rollbackErrors.push(rollbackError)
+              }
+            }
+            if (rollbackErrors.length > 0) {
+              throw new AggregateError([error, ...rollbackErrors], 'Future target acceptance failed and could not be fully rolled back')
             }
             throw error
           }
         }
-        if (set.targetDecision === 'accepting') {
+        if (set.targetDecision === 'accepting' || set.targetDecision === 'declining') {
           if (!exercise.templateExerciseId || !set.templateSetId) throw new Error('The original workout set is no longer available')
+          const previousTarget = set.targetDecisionPreviousTarget
+            ?? { weight: set.targetWeight, reps: set.targetReps }
+          if (set.targetDecision === 'accepting') {
+            await updateTargetDecision(sessionId, sessionExerciseId, setId, 'declining', previousTarget)
+          }
           await workoutService.updateSetTarget(
             completed.templateId,
             exercise.templateExerciseId,
             set.templateSetId,
-            { weight: set.targetWeight, reps: set.targetReps },
+            previousTarget,
           )
         }
         return cloneSession(await updateTargetDecision(sessionId, sessionExerciseId, setId, 'declined'))
