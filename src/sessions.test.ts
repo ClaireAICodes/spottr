@@ -525,7 +525,7 @@ describe('active workout session service', () => {
     expect(decisions.every((session) => session.exercises[0].sets[0].targetDecision === 'accepted')).toBe(true)
   })
 
-  it('recovers a durable pending acceptance left by an interruption', async () => {
+  it('conservatively declines a durable pending acceptance after an interruption', async () => {
     const context = await createTrainingContext()
     const baseRepository = createMemorySessionRepository()
     const seedService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
@@ -547,8 +547,8 @@ describe('active workout session service', () => {
 
     const recoveredService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
     const next = await recoveredService.start(context.template.id)
-    expect(next.exercises[0].sets[0]).toMatchObject({ targetWeight: 25, targetReps: 9 })
-    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('accepted')
+    expect(next.exercises[0].sets[0]).toMatchObject({ targetWeight: 20, targetReps: 10 })
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('declined')
   })
 
   it('restores the prior target when acceptance recovery cannot finalize history', async () => {
@@ -770,6 +770,63 @@ describe('active workout session service', () => {
       .toMatchObject({ weight: 20, reps: 10 })
     expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision)
       .toBe('declining')
+
+    const next = await createSessionService(baseRepository, context.workoutService, context.exerciseService)
+      .start(context.template.id)
+    expect(next.exercises[0].sets[0]).toMatchObject({ targetWeight: 20, targetReps: 10 })
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision)
+      .toBe('declined')
+  })
+
+  it('never recovers a decline as acceptance when decline marker writes keep failing', async () => {
+    const context = await createTrainingContext()
+    const baseRepository = createMemorySessionRepository()
+    const seedService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const active = await seedService.start(context.template.id)
+    const sessionSet = active.exercises[0].sets[0]
+    await seedService.logSet(active.exercises[0].id, sessionSet.id, { weight: 25, reps: 9 })
+    const completed = await seedService.complete()
+    await baseRepository.updateHistory(completed.id, (current) => ({
+      ...current,
+      exercises: current.exercises.map((exercise) => exercise.id === active.exercises[0].id
+        ? {
+            ...exercise,
+            sets: exercise.sets.map((set) => set.id === sessionSet.id
+              ? {
+                  ...set,
+                  targetDecision: 'accepting' as const,
+                  targetDecisionPreviousTarget: { weight: 20, reps: 10 },
+                }
+              : set),
+          }
+        : exercise),
+    }))
+    await context.workoutService.updateSetTarget(
+      context.template.id,
+      context.template.exercises[0].id,
+      context.template.exercises[0].sets[0].id,
+      { weight: 25, reps: 9 },
+    )
+    const failingRepository = {
+      ...baseRepository,
+      async updateHistory(...args: Parameters<typeof baseRepository.updateHistory>) {
+        const current = await baseRepository.getHistory(args[0])
+        const updated = current ? args[1](current) : null
+        if (updated?.exercises[0].sets[0].targetDecision === 'declining') {
+          throw new Error('decline marker storage unavailable')
+        }
+        return baseRepository.updateHistory(...args)
+      },
+    }
+
+    await expect(createSessionService(failingRepository, context.workoutService, context.exerciseService)
+      .decideFutureTarget(completed.id, active.exercises[0].id, sessionSet.id, 'decline'))
+      .rejects.toThrow('Future target decline failed and could not be fully preserved')
+
+    expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0])
+      .toMatchObject({ weight: 20, reps: 10 })
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision)
+      .toBe('accepting')
 
     const next = await createSessionService(baseRepository, context.workoutService, context.exerciseService)
       .start(context.template.id)

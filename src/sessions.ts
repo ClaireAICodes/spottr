@@ -176,40 +176,18 @@ export function createSessionService(
         for (const set of exercise.sets) {
           if (set.targetDecision !== 'accepting' && set.targetDecision !== 'declining') continue
           if (!exercise.templateExerciseId || !set.templateSetId) throw new Error('The original workout set is no longer available')
-          const isDeclining = set.targetDecision === 'declining'
-          const target = isDeclining
-            ? set.targetDecisionPreviousTarget ?? { weight: set.targetWeight, reps: set.targetReps }
-            : { weight: set.weight, reps: set.reps }
+          // An `accepting` marker cannot reveal whether a later decline-intent
+          // write failed before it committed. Recovery therefore resolves every
+          // unfinished decision conservatively to the captured previous target;
+          // an explicit accept retry can still finish acceptance through
+          // decideFutureTarget(), but restart must never turn a decline into one.
+          const target = set.targetDecisionPreviousTarget
+            ?? { weight: set.targetWeight, reps: set.targetReps }
           await workoutService.updateSetTarget(completed.templateId, exercise.templateExerciseId, set.templateSetId, {
             weight: target.weight,
             reps: target.reps,
           })
-          try {
-            await updateTargetDecision(
-              completed.id,
-              exercise.id,
-              set.id,
-              isDeclining ? 'declined' : 'accepted',
-            )
-          } catch (error) {
-            if (isDeclining) throw error
-            const previousTarget = set.targetDecisionPreviousTarget
-              ?? { weight: set.targetWeight, reps: set.targetReps }
-            try {
-              await workoutService.updateSetTarget(
-                completed.templateId,
-                exercise.templateExerciseId,
-                set.templateSetId,
-                previousTarget,
-              )
-            } catch (rollbackError) {
-              throw new AggregateError(
-                [error, rollbackError],
-                'Future target acceptance recovery failed and could not restore the template',
-              )
-            }
-            throw error
-          }
+          await updateTargetDecision(completed.id, exercise.id, set.id, 'declined')
         }
       }
     }
