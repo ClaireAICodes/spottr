@@ -139,6 +139,23 @@ export function createSessionService(
     return result
   }
 
+  function updateTargetDecision(
+    sessionId: string,
+    sessionExerciseId: string,
+    setId: string,
+    targetDecision: SessionSet['targetDecision'],
+  ) {
+    return repository.updateHistory(sessionId, (current) => ({
+      ...current,
+      exercises: current.exercises.map((exercise) => exercise.id === sessionExerciseId
+        ? {
+            ...exercise,
+            sets: exercise.sets.map((set) => set.id === setId ? { ...set, targetDecision } : set),
+          }
+        : exercise),
+    }))
+  }
+
   async function recoverPendingTargetDecisions() {
     const history = await repository.listHistory()
     for (const completed of history) {
@@ -227,11 +244,17 @@ export function createSessionService(
           .filter((set) => Boolean(set.completedAt))
         const activeSets = activeExercise.sets.filter((set) => set.id !== setId && Boolean(set.completedAt))
         const previousSets = [...historicalSets, ...activeSets]
-        const previousMaxWeight = Math.max(...previousSets.map(({ weight }) => weight), Number.NEGATIVE_INFINITY)
-        const previousMaxVolume = Math.max(...previousSets.map(({ weight, reps }) => weight * reps), Number.NEGATIVE_INFINITY)
         const personalRecords: SessionSet['personalRecords'] = []
-        if (actual.weight > previousMaxWeight) personalRecords.push('weight')
-        if (actual.weight * actual.reps > previousMaxVolume) personalRecords.push('set-volume')
+        if (previousSets.length === 0) {
+          // The first completed set establishes both baselines and is intentionally
+          // celebrated; later sets must exceed an observed value to earn a PR.
+          personalRecords.push('weight', 'set-volume')
+        } else {
+          const previousMaxWeight = Math.max(...previousSets.map(({ weight }) => weight))
+          const previousMaxVolume = Math.max(...previousSets.map(({ weight, reps }) => weight * reps))
+          if (actual.weight > previousMaxWeight) personalRecords.push('weight')
+          if (actual.weight * actual.reps > previousMaxVolume) personalRecords.push('set-volume')
+        }
         const timestamp = now()
         const session = await repository.updateActive((current) => {
           let found = false
@@ -324,43 +347,52 @@ export function createSessionService(
         }
         if (decision === 'accept') {
           if (!exercise.templateExerciseId || !set.templateSetId) throw new Error('The original workout set is no longer available')
-          if (set.targetDecision !== 'accepting') {
-            await repository.updateHistory(sessionId, (current) => ({
-              ...current,
-              exercises: current.exercises.map((item) => item.id === sessionExerciseId
-                ? { ...item, sets: item.sets.map((target) => target.id === setId ? { ...target, targetDecision: 'accepting' } : target) }
-                : item),
-            }))
+          const currentTemplate = await workoutService.get(completed.templateId)
+          const currentTemplateSet = currentTemplate?.exercises
+            .find(({ id }) => id === exercise.templateExerciseId)
+            ?.sets.find(({ id }) => id === set.templateSetId)
+          if (!currentTemplateSet) throw new Error('The original workout set is no longer available')
+          const previousTarget = { weight: currentTemplateSet.weight, reps: currentTemplateSet.reps }
+          const isAcceptanceRetry = set.targetDecision === 'accepting'
+          if (!isAcceptanceRetry) {
+            await updateTargetDecision(sessionId, sessionExerciseId, setId, 'accepting')
           }
+          try {
+            await workoutService.updateSetTarget(
+              completed.templateId,
+              exercise.templateExerciseId,
+              set.templateSetId,
+              { weight: set.weight, reps: set.reps },
+            )
+            return cloneSession(await updateTargetDecision(sessionId, sessionExerciseId, setId, 'accepted'))
+          } catch (error) {
+            if (isAcceptanceRetry) throw error
+            try {
+              // The template and history use separate stores, so compensate any
+              // partial template write before clearing the durable intent marker.
+              await workoutService.updateSetTarget(
+                completed.templateId,
+                exercise.templateExerciseId,
+                set.templateSetId,
+                previousTarget,
+              )
+              await updateTargetDecision(sessionId, sessionExerciseId, setId, undefined)
+            } catch (rollbackError) {
+              throw new AggregateError([error, rollbackError], 'Future target acceptance failed and could not be fully rolled back')
+            }
+            throw error
+          }
+        }
+        if (set.targetDecision === 'accepting') {
+          if (!exercise.templateExerciseId || !set.templateSetId) throw new Error('The original workout set is no longer available')
           await workoutService.updateSetTarget(
             completed.templateId,
             exercise.templateExerciseId,
             set.templateSetId,
-            { weight: set.weight, reps: set.reps },
+            { weight: set.targetWeight, reps: set.targetReps },
           )
-          return cloneSession(await repository.updateHistory(sessionId, (current) => ({
-            ...current,
-            exercises: current.exercises.map((item) => item.id === sessionExerciseId
-              ? {
-                  ...item,
-                  sets: item.sets.map((target) => target.id === setId
-                    ? { ...target, targetDecision: 'accepted' }
-                    : target),
-                }
-              : item),
-          })))
         }
-        return cloneSession(await repository.updateHistory(sessionId, (current) => ({
-          ...current,
-          exercises: current.exercises.map((item) => item.id === sessionExerciseId
-            ? {
-                ...item,
-                sets: item.sets.map((target) => target.id === setId
-                ? { ...target, targetDecision: 'declined' }
-                : target),
-              }
-            : item),
-        })))
+        return cloneSession(await updateTargetDecision(sessionId, sessionExerciseId, setId, 'declined'))
       }))
     },
   }

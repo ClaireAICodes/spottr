@@ -12,6 +12,59 @@ function requestResult<T>(request: IDBRequest<T>) {
   })
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isSessionSet(value: unknown) {
+  if (!isRecord(value)) return false
+  return typeof value.id === 'string'
+    && (value.templateSetId === undefined || typeof value.templateSetId === 'string')
+    && (value.kind === 'warm-up' || value.kind === 'working' || value.kind === 'drop')
+    && typeof value.targetWeight === 'number'
+    && typeof value.targetReps === 'number'
+    && typeof value.weight === 'number'
+    && typeof value.reps === 'number'
+    && (value.completedAt === null || typeof value.completedAt === 'string')
+    && (value.skippedAt === null || typeof value.skippedAt === 'string')
+    && (value.personalRecords === undefined || (Array.isArray(value.personalRecords)
+      && value.personalRecords.every((record) => record === 'weight' || record === 'set-volume')))
+    && (value.targetDecision === undefined
+      || value.targetDecision === 'accepting'
+      || value.targetDecision === 'accepted'
+      || value.targetDecision === 'declined')
+}
+
+function isSessionExercise(value: unknown) {
+  if (!isRecord(value)) return false
+  return typeof value.id === 'string'
+    && (value.templateExerciseId === undefined || typeof value.templateExerciseId === 'string')
+    && typeof value.exerciseId === 'string'
+    && typeof value.name === 'string'
+    && Array.isArray(value.sets)
+    && value.sets.every(isSessionSet)
+}
+
+function isCompletedWorkoutSession(value: unknown): value is CompletedWorkoutSession {
+  if (!isRecord(value) || !isRecord(value.summary)) return false
+  return typeof value.id === 'string'
+    && typeof value.templateId === 'string'
+    && typeof value.name === 'string'
+    && typeof value.gymId === 'string'
+    && typeof value.gymName === 'string'
+    && Array.isArray(value.exercises)
+    && value.exercises.every(isSessionExercise)
+    && typeof value.startedAt === 'string'
+    && typeof value.updatedAt === 'string'
+    && typeof value.endedAt === 'string'
+    && typeof value.summary.completedExercises === 'number'
+    && typeof value.summary.skippedExercises === 'number'
+    && typeof value.summary.completedSets === 'number'
+    && typeof value.summary.skippedSets === 'number'
+    && typeof value.summary.volume === 'number'
+    && typeof value.summary.durationSeconds === 'number'
+}
+
 export function createIndexedDbSessionRepository(databaseName = 'spottr-v1-sessions'): SessionRepository {
   let databasePromise: Promise<IDBDatabase> | null = null
 
@@ -119,8 +172,7 @@ export function createIndexedDbSessionRepository(databaseName = 'spottr-v1-sessi
     async listHistory() {
       const database = await openDatabase()
       const results = await requestResult(database.transaction(SESSIONS_STORE).objectStore(SESSIONS_STORE).getAll())
-      return (results as Array<WorkoutSession | CompletedWorkoutSession>)
-        .filter((session): session is CompletedWorkoutSession => 'endedAt' in session)
+      return (results as unknown[]).filter(isCompletedWorkoutSession)
     },
     async getHistory(id) {
       const database = await openDatabase()
