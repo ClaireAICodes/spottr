@@ -441,7 +441,36 @@ export function createSessionService(
           const previousTarget = set.targetDecisionPreviousTarget
             ?? { weight: set.targetWeight, reps: set.targetReps }
           if (set.targetDecision === 'accepting') {
-            await updateTargetDecision(sessionId, sessionExerciseId, setId, 'declining', previousTarget)
+            try {
+              await updateTargetDecision(sessionId, sessionExerciseId, setId, 'declining', previousTarget)
+            } catch (error) {
+              // The first write may fail before or after the store commits it. Retry
+              // the idempotent transition so recovery cannot mistake a decline for
+              // an interrupted acceptance, then compensate the visible template.
+              const compensationErrors: unknown[] = []
+              try {
+                await updateTargetDecision(sessionId, sessionExerciseId, setId, 'declining', previousTarget)
+              } catch (retryError) {
+                compensationErrors.push(retryError)
+              }
+              try {
+                await workoutService.updateSetTarget(
+                  completed.templateId,
+                  exercise.templateExerciseId,
+                  set.templateSetId,
+                  previousTarget,
+                )
+              } catch (rollbackError) {
+                compensationErrors.push(rollbackError)
+              }
+              if (compensationErrors.length > 0) {
+                throw new AggregateError(
+                  [error, ...compensationErrors],
+                  'Future target decline failed and could not be fully preserved',
+                )
+              }
+              throw error
+            }
           }
           await workoutService.updateSetTarget(
             completed.templateId,

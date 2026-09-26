@@ -718,6 +718,66 @@ describe('active workout session service', () => {
     expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('declined')
   })
 
+  it('preserves decline intent when the first decline marker write fails', async () => {
+    const context = await createTrainingContext()
+    const baseRepository = createMemorySessionRepository()
+    const seedService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const active = await seedService.start(context.template.id)
+    const sessionSet = active.exercises[0].sets[0]
+    await seedService.logSet(active.exercises[0].id, sessionSet.id, { weight: 25, reps: 9 })
+    const completed = await seedService.complete()
+    await baseRepository.updateHistory(completed.id, (current) => ({
+      ...current,
+      exercises: current.exercises.map((exercise) => exercise.id === active.exercises[0].id
+        ? {
+            ...exercise,
+            sets: exercise.sets.map((set) => set.id === sessionSet.id
+              ? {
+                  ...set,
+                  targetDecision: 'accepting' as const,
+                  targetDecisionPreviousTarget: { weight: 20, reps: 10 },
+                }
+              : set),
+          }
+        : exercise),
+    }))
+    await context.workoutService.updateSetTarget(
+      context.template.id,
+      context.template.exercises[0].id,
+      context.template.exercises[0].sets[0].id,
+      { weight: 25, reps: 9 },
+    )
+    let failFirstDeclineMarker = true
+    const failingRepository = {
+      ...baseRepository,
+      async updateHistory(...args: Parameters<typeof baseRepository.updateHistory>) {
+        const current = await baseRepository.getHistory(args[0])
+        const updated = current ? args[1](current) : null
+        const decision = updated?.exercises[0].sets[0].targetDecision
+        if (failFirstDeclineMarker && decision === 'declining') {
+          failFirstDeclineMarker = false
+          throw new Error('decline marker write failed')
+        }
+        return baseRepository.updateHistory(...args)
+      },
+    }
+
+    await expect(createSessionService(failingRepository, context.workoutService, context.exerciseService)
+      .decideFutureTarget(completed.id, active.exercises[0].id, sessionSet.id, 'decline'))
+      .rejects.toThrow('decline marker write failed')
+
+    expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0])
+      .toMatchObject({ weight: 20, reps: 10 })
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision)
+      .toBe('declining')
+
+    const next = await createSessionService(baseRepository, context.workoutService, context.exerciseService)
+      .start(context.template.id)
+    expect(next.exercises[0].sets[0]).toMatchObject({ targetWeight: 20, targetReps: 10 })
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision)
+      .toBe('declined')
+  })
+
   it('declines an interrupted acceptance to the exact target captured before acceptance', async () => {
     const context = await createTrainingContext()
     const baseRepository = createMemorySessionRepository()
