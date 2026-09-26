@@ -162,6 +162,31 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
       })
     },
 
+    async updateSetTarget(id: string, templateExerciseId: string, setId: string, target: { weight: number; reps: number }) {
+      return withWorkoutIntegrityLock(async () => {
+        const current = await requireTemplate(id)
+        let found = false
+        const exercises = current.exercises.map((exercise) => exercise.id === templateExerciseId
+          ? {
+              ...exercise,
+              sets: exercise.sets.map((set) => {
+                if (set.id !== setId) return set
+                found = true
+                return { ...set, ...target }
+              }),
+            }
+          : exercise)
+        if (!found) throw new Error('Workout set not found')
+        const template: WorkoutTemplate = {
+          ...current,
+          ...normalize({ name: current.name, gymId: current.gymId, exercises }, current),
+          updatedAt: now(),
+        }
+        await repository.save(template)
+        return cloneTemplate(template)
+      })
+    },
+
     async duplicate(id: string, gymId: string) {
       return withWorkoutIntegrityLock(async () => {
         const current = await requireTemplate(id)

@@ -4,10 +4,10 @@ import {
   BarChart3,
   CalendarDays,
   ChevronRight,
-  CircleUserRound,
   Dumbbell,
   Home,
   Play,
+  SlidersHorizontal,
   Sparkles,
 } from 'lucide-react'
 import { ActionButton, Panel, StatusPill } from './primitives'
@@ -17,6 +17,7 @@ import { SessionSummary } from './SessionSummary'
 import { ExerciseLibrary } from './ExerciseLibrary'
 import { GymManager } from './GymManager'
 import { WorkoutPlanner } from './WorkoutPlanner'
+import { SettingsView } from './SettingsView'
 import { createIndexedDbExerciseRepository } from './exerciseRepository'
 import { createExerciseService, type ExerciseService } from './exercises'
 import { createIndexedDbGymRepository } from './gymRepository'
@@ -26,13 +27,15 @@ import { createIndexedDbSessionRepository } from './sessionRepository'
 import { createMemorySessionRepository, createSessionService, type CompletedWorkoutSession, type SessionService, type WorkoutSession } from './sessions'
 import { withWorkoutIntegrityLock } from './workoutIntegrity'
 import { createWorkoutService, type WorkoutService, type WorkoutTemplate } from './workouts'
+import { createIndexedDbSettingsRepository } from './settingsRepository'
+import { createSettingsService, DEFAULT_SETTINGS, type AppSettings, type SettingsService } from './settings'
 
 const tabs = [
   { label: 'Home', icon: Home },
   { label: 'Train', icon: Dumbbell },
   { label: 'Plan', icon: CalendarDays },
   { label: 'History', icon: BarChart3 },
-  { label: 'Profile', icon: CircleUserRound },
+  { label: 'Settings', icon: SlidersHorizontal },
 ] as const
 
 const compactNavQuery = '(max-width: 820px)'
@@ -47,17 +50,20 @@ const defaultSessionService = createSessionService(
   defaultExerciseService,
   { resolveGymName: async (id) => (await defaultGymService.get(id))?.name ?? null },
 )
+const defaultSettingsService = createSettingsService(createIndexedDbSettingsRepository())
 
 export function App({
   gymService = defaultGymService,
   exerciseService = defaultExerciseService,
   workoutService = defaultWorkoutService,
   sessionService,
+  settingsService = defaultSettingsService,
 }: {
   gymService?: GymService
   exerciseService?: ExerciseService
   workoutService?: WorkoutService
   sessionService?: SessionService
+  settingsService?: SettingsService
 }) {
   const [activeTab, setActiveTab] = useState(0)
   const [isManagingGyms, setIsManagingGyms] = useState(false)
@@ -71,6 +77,8 @@ export function App({
   const [templateLoadError, setTemplateLoadError] = useState('')
   const [templateStatus, setTemplateStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [templateReload, setTemplateReload] = useState(0)
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+  const [settingsStatus, setSettingsStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const selectedGymRequest = useRef(0)
   const activeSessionRequest = useRef(0)
   const [isCompactNav, setIsCompactNav] = useState(
@@ -95,6 +103,18 @@ export function App({
           resolveGymName: async (id) => (await gymService.get(id))?.name ?? null,
         })
   ), [exerciseService, gymService, sessionService, workoutService])
+
+  useEffect(() => {
+    let current = true
+    setSettingsStatus('loading')
+    settingsService.get().then((loaded) => {
+      if (current) {
+        setSettings(loaded)
+        setSettingsStatus('ready')
+      }
+    }).catch(() => { if (current) setSettingsStatus('error') })
+    return () => { current = false }
+  }, [settingsService])
 
   useEffect(() => {
     if (!window.matchMedia) return
@@ -206,6 +226,9 @@ export function App({
 
   const current = tabs[activeTab]
   const pageTitle = isManagingGyms ? 'Gyms' : current.label
+  const settingsSensitiveView = activeTab === 2
+    || activeTab === 3
+    || (activeTab === 0 && Boolean(completedSession || (isSessionOpen && activeSession)))
 
   return (
     <div className="app-shell">
@@ -226,14 +249,20 @@ export function App({
           <button className="avatar-button" aria-label="Open profile"><span aria-hidden="true">P</span></button>
         </header>
 
-        {activeTab === 0 && completedSession ? (
+        {settingsSensitiveView && settingsStatus === 'loading' ? (
+          <section id="main-view" role="tabpanel" aria-labelledby={`tab-${current.label.toLowerCase()}`}><p role="status">Loading saved settings…</p></section>
+        ) : settingsSensitiveView && settingsStatus === 'error' ? (
+          <section id="main-view" role="tabpanel" aria-labelledby={`tab-${current.label.toLowerCase()}`}><p role="alert" className="form-message error-copy">Your saved settings could not be loaded. Your saved data has not been changed.</p></section>
+        ) : activeTab === 0 && completedSession ? (
           <SessionSummary
             session={completedSession}
+            sessionService={activeSessionService}
+            settings={settings}
             onViewHistory={() => { setCompletedSession(null); selectTab(3) }}
             onDone={() => setCompletedSession(null)}
           />
         ) : activeTab === 0 && isSessionOpen && activeSession ? (
-          <ActiveSession initialSession={activeSession} sessionService={activeSessionService} onSessionChange={setActiveSession} onComplete={completeSession} />
+          <ActiveSession initialSession={activeSession} sessionService={activeSessionService} settings={settings} onSessionChange={setActiveSession} onComplete={completeSession} />
         ) : activeTab === 0 && isManagingGyms ? (
           <GymManager
             service={managedGymService}
@@ -259,11 +288,11 @@ export function App({
         ) : activeTab === 1 ? (
           <ExerciseLibrary service={exerciseService} />
         ) : activeTab === 2 ? (
-          <WorkoutPlanner workoutService={workoutService} gymService={gymService} exerciseService={exerciseService} />
+          <WorkoutPlanner workoutService={workoutService} gymService={gymService} exerciseService={exerciseService} settings={settings} />
         ) : activeTab === 3 ? (
-          <SessionHistory sessionService={activeSessionService} />
+          <SessionHistory sessionService={activeSessionService} settings={settings} />
         ) : (
-          <QuietPlaceholder title={current.label} labelledBy={`tab-${current.label.toLowerCase()}`} />
+          <SettingsView settingsService={settingsService} exerciseService={exerciseService} onSettingsChange={setSettings} />
         )}
       </main>
 
@@ -389,16 +418,6 @@ function HomeFrames({
       <section className="principle-strip" aria-label="Product principles">
         <span>Clear</span><span>Calm</span><span>Ready</span>
       </section>
-    </div>
-  )
-}
-
-function QuietPlaceholder({ title, labelledBy }: { title: string; labelledBy: string }) {
-  return (
-    <div id="main-view" role="tabpanel" aria-labelledby={labelledBy} className="quiet-placeholder">
-      <p className="eyebrow">Shell preview</p>
-      <h2>{title}</h2>
-      <p>This destination is intentionally empty in Phase 1.</p>
     </div>
   )
 }

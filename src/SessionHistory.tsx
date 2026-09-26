@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { Panel } from './primitives'
 import type { CompletedWorkoutSession, SessionService } from './sessions'
+import { formatWeight, type AppSettings } from './settings'
 
 function formatDuration(seconds: number) {
   const minutes = Math.floor(seconds / 60)
@@ -12,7 +13,7 @@ function formatSets(count: number) {
   return `${count} ${count === 1 ? 'set' : 'sets'}`
 }
 
-export function SessionHistory({ sessionService }: { sessionService: SessionService }) {
+export function SessionHistory({ sessionService, settings }: { sessionService: SessionService; settings: AppSettings }) {
   const [sessions, setSessions] = useState<CompletedWorkoutSession[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -47,7 +48,7 @@ export function SessionHistory({ sessionService }: { sessionService: SessionServ
                 <div>
                   <p className="eyebrow"><time dateTime={session.endedAt}>{new Date(session.endedAt).toLocaleString()}</time></p>
                   <h3>{session.name}</h3>
-                  <p>{session.gymName} · {session.summary.volume.toLocaleString()} kg · {formatDuration(session.summary.durationSeconds)}</p>
+                  <p>{session.gymName} · {formatWeight(session.summary.volume, settings.weightUnit)} · {formatDuration(session.summary.durationSeconds)}</p>
                 </div>
                 <button type="button" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : session.id)}>
                   {expanded ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
@@ -69,8 +70,8 @@ export function SessionHistory({ sessionService }: { sessionService: SessionServ
                         {exercise.sets.map((set, index) => (
                           <li key={set.id}>
                             <span>Set {index + 1}</span>
-                            <strong>{set.weight.toLocaleString()} kg × {set.reps} reps</strong>
-                            <span>{set.completedAt ? 'Completed' : 'Skipped'}</span>
+                            <strong>{formatWeight(set.weight, settings.weightUnit)} × {set.reps} reps</strong>
+                            <span>{set.completedAt ? `Completed${set.personalRecords?.length ? ` · ${set.personalRecords.map((record) => record === 'weight' ? 'Weight PR' : 'Set volume PR').join(' + ')}` : ''}` : 'Skipped'}</span>
                           </li>
                         ))}
                       </ol>

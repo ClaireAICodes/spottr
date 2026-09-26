@@ -30,6 +30,69 @@ async function createTrainingContext() {
 }
 
 describe('active workout session service', () => {
+  it('detects weight and set-volume PRs from completed history while excluding skipped sets', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const timestamps = [
+      '2026-09-23T01:00:00.000Z',
+      '2026-09-23T01:10:00.000Z',
+      '2026-09-23T02:00:00.000Z',
+      '2026-09-24T01:00:00.000Z',
+      '2026-09-24T01:10:00.000Z',
+      '2026-09-24T01:20:00.000Z',
+    ]
+    const service = createSessionService(repository, context.workoutService, context.exerciseService, {
+      now: () => timestamps.shift()!,
+    })
+    const seeded = await service.start(context.template.id, context.gym.name)
+    await service.logSet(seeded.exercises[0].id, seeded.exercises[0].sets[1].id, { weight: 80, reps: 8 })
+    await service.complete()
+    await context.workoutService.update(context.template.id, {
+      name: context.template.name,
+      gymId: context.template.gymId,
+      exercises: [{
+        ...context.template.exercises[0],
+        sets: [
+          { ...context.template.exercises[0].sets[0], weight: 85, reps: 5 },
+          { ...context.template.exercises[0].sets[1], weight: 80, reps: 10 },
+        ],
+      }],
+    })
+
+    const current = await service.start(context.template.id, context.gym.name)
+    const weightRecord = await service.logSet(current.exercises[0].id, current.exercises[0].sets[0].id, { weight: 85, reps: 5 })
+    const volumeRecord = await service.logSet(current.exercises[0].id, current.exercises[0].sets[1].id, { weight: 80, reps: 10 })
+
+    expect(weightRecord.exercises[0].sets[0].personalRecords).toEqual(['weight'])
+    expect(volumeRecord.exercises[0].sets[1].personalRecords).toEqual(['set-volume'])
+  })
+
+  it('persists accepted and declined future-target decisions and applies only accepted targets on the next load', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const service = createSessionService(repository, context.workoutService, context.exerciseService, {
+      now: () => '2026-09-24T13:15:00.000Z',
+    })
+    const first = await service.start(context.template.id, context.gym.name)
+    await service.logSet(first.exercises[0].id, first.exercises[0].sets[0].id, { weight: 25, reps: 9 })
+    const firstCompleted = await service.complete()
+
+    const accepted = await service.decideFutureTarget(firstCompleted.id, first.exercises[0].id, first.exercises[0].sets[0].id, 'accept')
+    expect(accepted.exercises[0].sets[0].targetDecision).toBe('accepted')
+    expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0]).toMatchObject({ weight: 25, reps: 9 })
+
+    const next = await service.start(context.template.id, context.gym.name)
+    expect(next.exercises[0].sets[0]).toMatchObject({ targetWeight: 25, targetReps: 9 })
+    await service.logSet(next.exercises[0].id, next.exercises[0].sets[0].id, { weight: 27.5, reps: 8 })
+    const nextCompleted = await service.complete()
+    const declined = await service.decideFutureTarget(nextCompleted.id, next.exercises[0].id, next.exercises[0].sets[0].id, 'decline')
+
+    expect(declined.exercises[0].sets[0].targetDecision).toBe('declined')
+    expect((await context.workoutService.get(context.template.id))?.exercises[0].sets[0]).toMatchObject({ weight: 25, reps: 9 })
+    const reloadedService = createSessionService(repository, context.workoutService, context.exerciseService)
+    expect((await reloadedService.getHistory(nextCompleted.id))?.exercises[0].sets[0].targetDecision).toBe('declined')
+  })
+
   it('completes a partial workout into durable history with skipped work excluded from volume', async () => {
     const context = await createTrainingContext()
     const repository = createMemorySessionRepository()
@@ -228,6 +291,26 @@ describe('active workout session service', () => {
     indexedDB.deleteDatabase(databaseName)
   })
 
+  it('persists a declined future-target decision across an IndexedDB reopen', async () => {
+    const context = await createTrainingContext()
+    const databaseName = `spottr-target-decision-${crypto.randomUUID()}`
+    const firstRepository = createIndexedDbSessionRepository(databaseName)
+    const service = createSessionService(firstRepository, context.workoutService, context.exerciseService, {
+      now: () => '2026-09-24T13:15:00.000Z',
+    })
+    const active = await service.start(context.template.id, context.gym.name)
+    await service.logSet(active.exercises[0].id, active.exercises[0].sets[0].id, { weight: 25, reps: 9 })
+    const completed = await service.complete()
+    await service.decideFutureTarget(completed.id, active.exercises[0].id, active.exercises[0].sets[0].id, 'decline')
+    await firstRepository.close?.()
+
+    const reopenedRepository = createIndexedDbSessionRepository(databaseName)
+    const restored = await createSessionService(reopenedRepository, context.workoutService, context.exerciseService).getHistory(completed.id)
+    expect(restored?.exercises[0].sets[0].targetDecision).toBe('declined')
+    await reopenedRepository.close?.()
+    indexedDB.deleteDatabase(databaseName)
+  })
+
   it('keeps every set when fast logs overlap', async () => {
     const context = await createTrainingContext()
     const repository = createMemorySessionRepository()
@@ -313,5 +396,102 @@ describe('active workout session service', () => {
     await firstRepository.close?.()
     await secondRepository.close?.()
     indexedDB.deleteDatabase(databaseName)
+  })
+
+  it('compares a later set with completed sets in the active session for PRs', async () => {
+    const context = await createTrainingContext()
+    const service = createSessionService(createMemorySessionRepository(), context.workoutService, context.exerciseService)
+    const started = await service.start(context.template.id)
+    const exercise = started.exercises[0]
+
+    const first = await service.logSet(exercise.id, exercise.sets[0].id, { weight: 100, reps: 10 })
+    const second = await service.logSet(exercise.id, exercise.sets[1].id, { weight: 90, reps: 10 })
+
+    expect(first.exercises[0].sets[0].personalRecords).toEqual(['weight', 'set-volume'])
+    expect(second.exercises[0].sets[1].personalRecords).toEqual([])
+  })
+
+  it('serializes PR comparison across service instances', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const firstService = createSessionService(repository, context.workoutService, context.exerciseService)
+    const secondService = createSessionService(repository, context.workoutService, context.exerciseService)
+    const started = await firstService.start(context.template.id)
+    const exercise = started.exercises[0]
+
+    const [first, second] = await Promise.all([
+      firstService.logSet(exercise.id, exercise.sets[0].id, { weight: 100, reps: 10 }),
+      secondService.logSet(exercise.id, exercise.sets[1].id, { weight: 90, reps: 10 }),
+    ])
+
+    expect(first.exercises[0].sets[0].personalRecords).toEqual(['weight', 'set-volume'])
+    expect(second.exercises[0].sets[1].personalRecords).toEqual([])
+  })
+
+  it('does not expose mutable personal-record arrays from repository clones', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const service = createSessionService(repository, context.workoutService, context.exerciseService)
+    const started = await service.start(context.template.id)
+    const logged = await service.logSet(started.exercises[0].id, started.exercises[0].sets[0].id, { weight: 100, reps: 10 })
+
+    logged.exercises[0].sets[0].personalRecords?.splice(0)
+
+    expect((await repository.getActive())?.exercises[0].sets[0].personalRecords).toEqual(['weight', 'set-volume'])
+  })
+
+  it('serializes duplicate future-target decisions across service instances', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const seedService = createSessionService(repository, context.workoutService, context.exerciseService)
+    const active = await seedService.start(context.template.id)
+    await seedService.logSet(active.exercises[0].id, active.exercises[0].sets[0].id, { weight: 25, reps: 9 })
+    const completed = await seedService.complete()
+    let targetUpdates = 0
+    const workoutService = {
+      ...context.workoutService,
+      async updateSetTarget(...args: Parameters<typeof context.workoutService.updateSetTarget>) {
+        targetUpdates += 1
+        await Promise.resolve()
+        return context.workoutService.updateSetTarget(...args)
+      },
+    }
+    const firstService = createSessionService(repository, workoutService, context.exerciseService)
+    const secondService = createSessionService(repository, workoutService, context.exerciseService)
+
+    const decisions = await Promise.all([
+      firstService.decideFutureTarget(completed.id, active.exercises[0].id, active.exercises[0].sets[0].id, 'accept'),
+      secondService.decideFutureTarget(completed.id, active.exercises[0].id, active.exercises[0].sets[0].id, 'accept'),
+    ])
+
+    expect(targetUpdates).toBe(1)
+    expect(decisions.every((session) => session.exercises[0].sets[0].targetDecision === 'accepted')).toBe(true)
+  })
+
+  it('leaves a durable pending acceptance that the next start recovers after interruption', async () => {
+    const context = await createTrainingContext()
+    const baseRepository = createMemorySessionRepository()
+    const seedService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const active = await seedService.start(context.template.id)
+    await seedService.logSet(active.exercises[0].id, active.exercises[0].sets[0].id, { weight: 25, reps: 9 })
+    const completed = await seedService.complete()
+    let historyWrites = 0
+    const interruptedRepository = {
+      ...baseRepository,
+      async updateHistory(...args: Parameters<typeof baseRepository.updateHistory>) {
+        historyWrites += 1
+        if (historyWrites === 2) throw new Error('history finalization interrupted')
+        return baseRepository.updateHistory(...args)
+      },
+    }
+    const service = createSessionService(interruptedRepository, context.workoutService, context.exerciseService)
+
+    await expect(service.decideFutureTarget(completed.id, active.exercises[0].id, active.exercises[0].sets[0].id, 'accept')).rejects.toThrow('history finalization interrupted')
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('accepting')
+
+    const recoveredService = createSessionService(baseRepository, context.workoutService, context.exerciseService)
+    const next = await recoveredService.start(context.template.id)
+    expect(next.exercises[0].sets[0]).toMatchObject({ targetWeight: 25, targetReps: 9 })
+    expect((await baseRepository.getHistory(completed.id))?.exercises[0].sets[0].targetDecision).toBe('accepted')
   })
 })

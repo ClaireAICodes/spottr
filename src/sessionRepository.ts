@@ -127,6 +127,30 @@ export function createIndexedDbSessionRepository(databaseName = 'spottr-v1-sessi
       const result = await requestResult(database.transaction(SESSIONS_STORE).objectStore(SESSIONS_STORE).get(`${HISTORY_KEY_PREFIX}${id}`))
       return (result as CompletedWorkoutSession | undefined) ?? null
     },
+    async updateHistory(id, update) {
+      const database = await openDatabase()
+      return new Promise<CompletedWorkoutSession>((resolve, reject) => {
+        const transaction = database.transaction(SESSIONS_STORE, 'readwrite')
+        const store = transaction.objectStore(SESSIONS_STORE)
+        const request = store.get(`${HISTORY_KEY_PREFIX}${id}`)
+        let updated: CompletedWorkoutSession | null = null
+        let updateError: unknown
+        request.onsuccess = () => {
+          try {
+            if (!request.result) throw new Error('Completed workout not found')
+            updated = update(request.result as CompletedWorkoutSession)
+            store.put(updated, `${HISTORY_KEY_PREFIX}${id}`)
+          } catch (error) {
+            updateError = error
+            transaction.abort()
+          }
+        }
+        request.onerror = () => reject(request.error ?? new Error('Local storage request failed'))
+        transaction.oncomplete = () => { if (updated) resolve(updated) }
+        transaction.onerror = () => reject(updateError ?? transaction.error ?? new Error('Local storage transaction failed'))
+        transaction.onabort = () => reject(updateError ?? transaction.error ?? new Error('Local storage transaction was cancelled'))
+      })
+    },
     async close() {
       if (!databasePromise) return
       const database = await databasePromise

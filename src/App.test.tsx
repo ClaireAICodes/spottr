@@ -5,6 +5,7 @@ import { App } from './App'
 import { createExerciseService, createMemoryExerciseRepository } from './exercises'
 import { createGymService, createMemoryGymRepository } from './gyms'
 import { createMemorySessionRepository, createSessionService } from './sessions'
+import { createMemorySettingsRepository, createSettingsService } from './settings'
 import { createMemoryWorkoutRepository, createWorkoutService } from './workouts'
 
 describe('Spottr application shell', () => {
@@ -21,7 +22,7 @@ describe('Spottr application shell', () => {
       expect.stringContaining('Train'),
       expect.stringContaining('Plan'),
       expect.stringContaining('History'),
-      expect.stringContaining('Profile'),
+      expect.stringContaining('Settings'),
     ])
     expect(screen.getByRole('tab', { name: /home/i })).toHaveAttribute('aria-selected', 'true')
   })
@@ -661,6 +662,92 @@ describe('workout template journey', () => {
 })
 
 describe('active workout session journey', () => {
+  it('presents seeded PRs and persists accepted and declined future targets from the summary', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'North Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Back Squat', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const template = await workoutService.create({
+      name: 'Lower Strength',
+      gymId: gym.id,
+      exercises: [{ exerciseId: squat.id, sets: [
+        { kind: 'working', weight: 80, reps: 8 },
+        { kind: 'working', weight: 80, reps: 8 },
+      ] }],
+    })
+    const repository = createMemorySessionRepository()
+    const sessionService = createSessionService(repository, workoutService, exerciseService)
+    const seeded = await sessionService.start(template.id, gym.name)
+    await sessionService.logSet(seeded.exercises[0].id, seeded.exercises[0].sets[0].id, { weight: 80, reps: 8 })
+    await sessionService.complete()
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+
+    await user.click(await screen.findByRole('button', { name: /start workout at north gym/i }))
+    await user.click(screen.getByRole('button', { name: /start lower strength/i }))
+    const weights = screen.getAllByLabelText(/back squat set \d weight/i)
+    const reps = screen.getAllByLabelText(/back squat set \d reps/i)
+    await user.clear(weights[0]); await user.type(weights[0], '85')
+    await user.clear(reps[0]); await user.type(reps[0], '5')
+    await user.click(screen.getByRole('button', { name: /log back squat set 1/i }))
+    expect(await screen.findByText(/new weight pr/i)).toBeInTheDocument()
+    await user.clear(weights[1]); await user.type(weights[1], '80')
+    await user.clear(reps[1]); await user.type(reps[1], '10')
+    await user.click(screen.getByRole('button', { name: /log back squat set 2/i }))
+    expect(await screen.findByText(/new set volume pr/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /finish workout/i }))
+
+    const offers = await screen.findAllByRole('group', { name: /future target/i })
+    await user.click(within(offers[0]).getByRole('button', { name: /use this target/i }))
+    await user.click(within(offers[1]).getByRole('button', { name: /keep current target/i }))
+    expect(await within(offers[0]).findByText(/target updated/i)).toBeInTheDocument()
+    expect(await within(offers[1]).findByText(/current target kept/i)).toBeInTheDocument()
+    expect((await workoutService.get(template.id))?.exercises[0].sets).toMatchObject([
+      { weight: 85, reps: 5 },
+      { weight: 80, reps: 8 },
+    ])
+    const latest = (await createSessionService(repository, workoutService, exerciseService).listHistory())[0]
+    expect(latest.exercises[0].sets.map(({ targetDecision }) => targetDecision)).toEqual(['accepted', 'declined'])
+  })
+
+  it('persists preferences, applies unit and feedback choices, and reports current media storage', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository(), { prepareImage: async (file) => file })
+    const exercise = await exerciseService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    await exerciseService.addMedia(exercise.id, new File(['1234'], 'setup.png', { type: 'image/png' }))
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    await workoutService.create({ name: 'Strength', gymId: gym.id, exercises: [{ exerciseId: exercise.id, sets: [{ kind: 'working', weight: 20, reps: 5 }] }] })
+    const settingsRepository = createMemorySettingsRepository()
+    const settingsService = createSettingsService(settingsRepository)
+    const firstRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} settingsService={settingsService} />)
+
+    await user.click(screen.getByRole('tab', { name: /settings/i }))
+    expect(await screen.findByText(/4 b used across 1 file/i)).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText(/weight unit/i), 'lb')
+    await user.click(screen.getByLabelText(/pr celebrations/i))
+    await user.clear(screen.getByLabelText(/rest duration/i))
+    await user.type(screen.getByLabelText(/rest duration/i), '120')
+    await user.click(screen.getByRole('button', { name: /save settings/i }))
+    expect(await screen.findByRole('status')).toHaveTextContent(/settings saved/i)
+
+    firstRender.unmount()
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} settingsService={settingsService} />)
+    await user.click(screen.getByRole('tab', { name: /settings/i }))
+    expect(await screen.findByLabelText(/weight unit/i)).toHaveValue('lb')
+    expect(screen.getByLabelText(/pr celebrations/i)).not.toBeChecked()
+    expect(screen.getByLabelText(/rest duration/i)).toHaveValue(120)
+    await user.click(screen.getByRole('tab', { name: /home/i }))
+    await user.click(await screen.findByRole('button', { name: /start workout at gym/i }))
+    await user.click(screen.getByRole('button', { name: /start strength/i }))
+    expect(screen.getByLabelText(/squat set 1 weight \(lb\)/i)).toHaveValue(44.1)
+    await user.click(screen.getByRole('button', { name: /log squat set 1/i }))
+    expect(await screen.findByText(/rest for 120 seconds/i)).toBeInTheDocument()
+    expect(screen.queryByText(/new .* pr/i)).not.toBeInTheDocument()
+  })
+
   it('finishes a partial workout, shows its summary, and restores set-level history after reload', async () => {
     const user = userEvent.setup()
     const gymService = createGymService(createMemoryGymRepository())
@@ -701,8 +788,8 @@ describe('active workout session journey', () => {
     expect(screen.getByText('400 kg')).toBeInTheDocument()
     expect(screen.getByText('1 set completed')).toBeInTheDocument()
     expect(screen.getByText('1 set skipped')).toBeInTheDocument()
-    expect(screen.getByText(/personal records.*coming next/i)).toBeInTheDocument()
-    expect(screen.getByText(/future targets.*coming next/i)).toBeInTheDocument()
+    expect(screen.getByText(/1 completed set earned a personal record/i)).toBeInTheDocument()
+    expect(screen.queryByText(/targets for next time/i)).not.toBeInTheDocument()
     expect(await sessionService.getActive()).toBeNull()
 
     firstRender.unmount()

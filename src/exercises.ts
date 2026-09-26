@@ -131,6 +131,15 @@ export function createExerciseService(repository: ExerciseRepository, options: E
       return exercise ? withMedia(exercise) : null
     },
 
+    async getMediaStorageUsage() {
+      const media = (await repository.list()).flatMap((exercise) => exercise.media ?? [])
+      return {
+        bytes: media.reduce((total, item) => total + item.size, 0),
+        count: media.length,
+        limitBytes: EXERCISE_MEDIA_TOTAL_BYTES,
+      }
+    },
+
     async addMedia(exerciseId: string, file: File) {
       const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : null
       if (!kind) throw new Error('Choose an image or video file')

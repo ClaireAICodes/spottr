@@ -123,6 +123,19 @@ describe('shared exercise library', () => {
     expect((await service.get(exercise.id))?.media.map((item) => item.id)).toEqual([image.id])
   })
 
+  it('reports accurate media storage usage after additions and removals', async () => {
+    const service = createExerciseService(createMemoryExerciseRepository(), {
+      prepareImage: async (file) => file,
+    })
+    const exercise = await service.create({ name: 'Deadlift', muscleGroup: '', equipment: '', notes: '' })
+    const image = await service.addMedia(exercise.id, new File(['1234'], 'setup.png', { type: 'image/png' }))
+    await service.addMedia(exercise.id, new File(['123456'], 'rep.mp4', { type: 'video/mp4' }))
+
+    expect(await service.getMediaStorageUsage()).toEqual({ bytes: 10, count: 2, limitBytes: EXERCISE_MEDIA_TOTAL_BYTES })
+    await service.removeMedia(exercise.id, image.id)
+    expect(await service.getMediaStorageUsage()).toEqual({ bytes: 6, count: 1, limitBytes: EXERCISE_MEDIA_TOTAL_BYTES })
+  })
+
   it('exerciseMedia_image_passesThroughCompressionBeforeStorage', async () => {
     const compressed = new Blob(['small'], { type: 'image/jpeg' })
     const prepareImage = vi.fn(async () => compressed)

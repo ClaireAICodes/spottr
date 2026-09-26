@@ -4,6 +4,7 @@ import type { FormEvent } from 'react'
 import type { Exercise, ExerciseService } from './exercises'
 import type { Gym, GymService } from './gyms'
 import { ActionButton, Panel } from './primitives'
+import { displayWeight, storedWeight, type AppSettings } from './settings'
 import type { SetKind, TemplateExerciseDraft, WorkoutService, WorkoutTemplate } from './workouts'
 
 type EditorState = {
@@ -25,10 +26,12 @@ export function WorkoutPlanner({
   workoutService,
   gymService,
   exerciseService,
+  settings,
 }: {
   workoutService: WorkoutService
   gymService: GymService
   exerciseService: ExerciseService
+  settings: AppSettings
 }) {
   const [templates, setTemplates] = useState<WorkoutTemplate[]>([])
   const [gyms, setGyms] = useState<Gym[]>([])
@@ -134,7 +137,11 @@ export function WorkoutPlanner({
     const sets = [...exercise.sets]
     sets[setIndex] = {
       ...sets[setIndex],
-      [field]: field === 'kind' ? value as SetKind : Number(value),
+      [field]: field === 'kind'
+        ? value as SetKind
+        : field === 'weight'
+          ? storedWeight(Number(value), settings.weightUnit)
+          : Number(value),
     }
     updateExercise(exerciseIndex, { ...exercise, sets })
   }
@@ -349,7 +356,7 @@ export function WorkoutPlanner({
                         <li key={set.id}>
                           <span className="set-number">{setIndex + 1}</span>
                           <label>Set {setIndex + 1} type<select aria-label={`Set ${setIndex + 1} type`} disabled={isSaving} value={set.kind} onChange={(event) => updateSet(exerciseIndex, setIndex, 'kind', event.target.value)}><option value="warm-up">Warm-up</option><option value="working">Working</option><option value="drop">Drop</option></select></label>
-                          <label>Weight<input aria-label={`Set ${setIndex + 1} weight`} type="number" min="0" step="0.5" disabled={isSaving} value={set.weight} onChange={(event) => updateSet(exerciseIndex, setIndex, 'weight', event.target.value)} /></label>
+                          <label>Weight ({settings.weightUnit})<input aria-label={`Set ${setIndex + 1} weight (${settings.weightUnit})`} type="number" min="0" step="0.1" disabled={isSaving} value={Number(displayWeight(set.weight, settings.weightUnit).toFixed(1))} onChange={(event) => updateSet(exerciseIndex, setIndex, 'weight', event.target.value)} /></label>
                           <label>Reps<input aria-label={`Set ${setIndex + 1} reps`} type="number" min="1" step="1" disabled={isSaving} value={set.reps} onChange={(event) => updateSet(exerciseIndex, setIndex, 'reps', event.target.value)} /></label>
                           <div className="compact-actions">
                             <button type="button" aria-label={`Move set ${setIndex + 1} up`} disabled={isSaving || setIndex === 0} onClick={() => moveSet(exerciseIndex, setIndex, -1)}><ArrowUp size={16} aria-hidden="true" /></button>

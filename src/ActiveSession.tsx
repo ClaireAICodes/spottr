@@ -2,23 +2,26 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Dumbbell, Flag } from 'lucide-react'
 import { ActionButton, Panel } from './primitives'
 import type { CompletedWorkoutSession, SessionService, WorkoutSession } from './sessions'
+import { displayWeight, storedWeight, type AppSettings } from './settings'
 
 export function ActiveSession({
   initialSession,
   sessionService,
   onSessionChange,
   onComplete,
+  settings,
 }: {
   initialSession: WorkoutSession
   sessionService: SessionService
   onSessionChange: (session: WorkoutSession) => void
   onComplete: (session: CompletedWorkoutSession) => void
+  settings: AppSettings
 }) {
   const [session, setSession] = useState(initialSession)
   const [values, setValues] = useState(() => Object.fromEntries(
     initialSession.exercises.flatMap((exercise) => exercise.sets.map((set) => [
       set.id,
-      { weight: String(set.weight), reps: String(set.reps) },
+      { weight: String(Number(displayWeight(set.weight, settings.weightUnit).toFixed(1))), reps: String(set.reps) },
     ])),
   ))
   const [pendingSetIds, setPendingSetIds] = useState<Set<string>>(() => new Set())
@@ -28,6 +31,7 @@ export function ActiveSession({
   const keepTrainingButton = useRef<HTMLButtonElement>(null)
   const confirmFinishButton = useRef<HTMLButtonElement>(null)
   const [error, setError] = useState('')
+  const [feedback, setFeedback] = useState<{ message: string; sequence: number } | null>(null)
   const allSets = session.exercises.flatMap((exercise) => exercise.sets)
   const completedSets = allSets.filter(({ completedAt }) => completedAt).length
   const remainingSets = allSets.length - completedSets
@@ -68,11 +72,18 @@ export function ActiveSession({
     setError('')
     try {
       const updated = await sessionService.logSet(exerciseId, setId, {
-        weight: Number(draft.weight),
+        weight: storedWeight(Number(draft.weight), settings.weightUnit),
         reps: Number(draft.reps),
       })
       setSession(updated)
       onSessionChange(updated)
+      const loggedSet = updated.exercises.flatMap(({ sets }) => sets).find(({ id }) => id === setId)
+      const messages: string[] = []
+      if (settings.prCelebrations && loggedSet?.personalRecords?.includes('weight')) messages.push('New weight PR')
+      if (settings.prCelebrations && loggedSet?.personalRecords?.includes('set-volume')) messages.push('New set volume PR')
+      if (settings.restTimerEnabled) messages.push(`Rest for ${settings.restSeconds} seconds`)
+      const message = messages.join(' · ')
+      setFeedback((current) => message ? { message, sequence: (current?.sequence ?? 0) + 1 } : null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The set could not be logged.')
     } finally {
@@ -110,6 +121,7 @@ export function ActiveSession({
         <Dumbbell size={30} aria-hidden="true" />
       </div>
       {error && <p role="alert" className="form-message error-copy">{error}</p>}
+      {feedback && <p key={feedback.sequence} role="status" className={`session-feedback${settings.prCelebrations && feedback.message.includes('PR') ? ' pr-celebration' : ''}`}>{feedback.message}</p>}
       <div className="session-exercises">
         {session.exercises.map((exercise) => (
           <Panel key={exercise.id} className="session-exercise" aria-labelledby={`session-exercise-${exercise.id}`}>
@@ -121,7 +133,7 @@ export function ActiveSession({
                 return (
                   <li key={set.id} className={completed ? 'logged' : undefined}>
                     <span className="set-number">{index + 1}</span>
-                    <label>{label} weight<input type="number" min="0" step="0.5" disabled={completed || pendingSetIds.has(set.id)} value={values[set.id].weight} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], weight: event.target.value } })} /></label>
+                    <label>{label} weight ({settings.weightUnit})<input type="number" min="0" step="0.1" disabled={completed || pendingSetIds.has(set.id)} value={values[set.id].weight} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], weight: event.target.value } })} /></label>
                     <label>{label} reps<input type="number" min="1" step="1" disabled={completed || pendingSetIds.has(set.id)} value={values[set.id].reps} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], reps: event.target.value } })} /></label>
                     <button type="button" disabled={completed || pendingSetIds.has(set.id)} aria-label={`${completed ? 'Logged' : 'Log'} ${label}`} onClick={() => void logSet(exercise.id, set.id)}>
                       <Check size={17} aria-hidden="true" /> {completed ? 'Logged' : pendingSetIds.has(set.id) ? 'Logging…' : 'Log set'}
