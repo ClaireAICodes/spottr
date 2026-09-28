@@ -4,6 +4,15 @@ import { ActionButton, Panel } from './primitives'
 import type { CompletedWorkoutSession, SessionService, WorkoutSession } from './sessions'
 import { displayWeight, storedWeight, type AppSettings } from './settings'
 
+function remainingRestSeconds(endsAt?: string) {
+  return endsAt ? Math.max(0, Math.ceil((Date.parse(endsAt) - Date.now()) / 1000)) : 0
+}
+
+function formatTimer(seconds: number) {
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
+}
+
 export function ActiveSession({
   initialSession,
   sessionService,
@@ -33,6 +42,9 @@ export function ActiveSession({
   const confirmFinishButton = useRef<HTMLButtonElement>(null)
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState<{ message: string; sequence: number } | null>(null)
+  const [restSecondsRemaining, setRestSecondsRemaining] = useState(
+    () => remainingRestSeconds(initialSession.restTimer?.endsAt),
+  )
   const allSets = session.exercises.flatMap((exercise) => exercise.sets)
   const completedSets = allSets.filter(({ completedAt }) => completedAt).length
   const skippedSets = allSets.filter(({ skippedAt }) => skippedAt).length
@@ -41,6 +53,14 @@ export function ActiveSession({
   useEffect(() => {
     if (isConfirmingFinish) keepTrainingButton.current?.focus()
   }, [isConfirmingFinish])
+
+  useEffect(() => {
+    const updateTimer = () => setRestSecondsRemaining(remainingRestSeconds(session.restTimer?.endsAt))
+    updateTimer()
+    if (!session.restTimer?.endsAt) return
+    const interval = window.setInterval(updateTimer, 250)
+    return () => window.clearInterval(interval)
+  }, [session.restTimer?.endsAt])
 
   function closeFinishDialog() {
     if (isFinishing) return
@@ -76,7 +96,7 @@ export function ActiveSession({
       const updated = await sessionService.logSet(exerciseId, setId, {
         weight: storedWeight(Number(draft.weight), settings.weightUnit),
         reps: Number(draft.reps),
-      })
+      }, settings.restTimerEnabled ? settings.restSeconds : undefined)
       setSession(updated)
       onSessionChange(updated)
       const loggedSet = updated.exercises.flatMap(({ sets }) => sets).find(({ id }) => id === setId)
@@ -164,6 +184,15 @@ export function ActiveSession({
       </div>
       {error && <p role="alert" className="form-message error-copy">{error}</p>}
       {feedback && <p key={feedback.sequence} role="status" className={`session-feedback${settings.prCelebrations && feedback.message.includes('PR') ? ' pr-celebration' : ''}`}>{feedback.message}</p>}
+      {restSecondsRemaining > 0 && (
+        <div className="rest-timer">
+          <div>
+            <p className="eyebrow">Rest remaining</p>
+            <strong role="timer" aria-label="Rest timer">{formatTimer(restSecondsRemaining)}</strong>
+          </div>
+          <p>This timer keeps running if you leave or reload.</p>
+        </div>
+      )}
       <div className="session-exercises">
         {session.exercises.map((exercise, exerciseIndex) => (
           <Panel key={exercise.id} className="session-exercise" aria-labelledby={`session-exercise-${exercise.id}`}>

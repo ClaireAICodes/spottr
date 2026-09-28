@@ -38,11 +38,13 @@ test('starts, fast-logs, reloads, and resumes an independent session snapshot at
   await weight.fill('82.5')
   await page.getByRole('button', { name: 'Log Back Squat set 1' }).click()
   await expect(page.getByText('1 of 1 sets logged')).toBeVisible()
+  await expect(page.getByRole('timer', { name: 'Rest timer' })).toContainText(/^1:\d{2}$/)
 
   await page.reload()
   await page.getByRole('button', { name: 'Resume Lower Strength' }).click()
   await expect(page.getByLabel('Back Squat set 1 weight')).toHaveValue('82.5')
   await expect(page.getByRole('button', { name: 'Logged Back Squat set 1' })).toBeDisabled()
+  await expect(page.getByRole('timer', { name: 'Rest timer' })).toBeVisible()
 
   const interactionState = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,

@@ -720,9 +720,10 @@ describe('active workout session journey', () => {
     await exerciseService.addMedia(exercise.id, new File(['1234'], 'setup.png', { type: 'image/png' }))
     const workoutService = createWorkoutService(createMemoryWorkoutRepository())
     await workoutService.create({ name: 'Strength', gymId: gym.id, exercises: [{ exerciseId: exercise.id, sets: [{ kind: 'working', weight: 20, reps: 5 }] }] })
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
     const settingsRepository = createMemorySettingsRepository()
     const settingsService = createSettingsService(settingsRepository)
-    const firstRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} settingsService={settingsService} />)
+    const firstRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} settingsService={settingsService} />)
 
     await user.click(screen.getByRole('tab', { name: /settings/i }))
     expect(await screen.findByText(/4 b used across 1 file/i)).toBeInTheDocument()
@@ -734,7 +735,7 @@ describe('active workout session journey', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(/settings saved/i)
 
     firstRender.unmount()
-    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} settingsService={settingsService} />)
+    const restoredRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} settingsService={settingsService} />)
     await user.click(screen.getByRole('tab', { name: /settings/i }))
     expect(await screen.findByLabelText(/weight unit/i)).toHaveValue('lb')
     expect(screen.getByLabelText(/pr celebrations/i)).not.toBeChecked()
@@ -745,7 +746,13 @@ describe('active workout session journey', () => {
     expect(screen.getByLabelText(/squat set 1 weight \(lb\)/i)).toHaveValue(44.1)
     await user.click(screen.getByRole('button', { name: /log squat set 1/i }))
     expect(await screen.findByText(/rest for 120 seconds/i)).toBeInTheDocument()
+    expect(screen.getByRole('timer', { name: /rest timer/i })).toHaveTextContent('2:00')
     expect(screen.queryByText(/new .* pr/i)).not.toBeInTheDocument()
+
+    restoredRender.unmount()
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} settingsService={settingsService} />)
+    await user.click(await screen.findByRole('button', { name: /resume strength/i }))
+    expect(screen.getByRole('timer', { name: /rest timer/i })).toBeInTheDocument()
   })
 
   it('finishes a partial workout, shows its summary, and restores set-level history after reload', async () => {

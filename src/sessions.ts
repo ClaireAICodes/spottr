@@ -31,6 +31,10 @@ export type WorkoutSession = {
   gymId: string
   gymName: string
   exercises: SessionExercise[]
+  restTimer?: {
+    startedAt: string
+    endsAt: string
+  }
   startedAt: string
   updatedAt: string
 }
@@ -71,6 +75,7 @@ type SessionServiceOptions = {
 function cloneSession<T extends WorkoutSession>(session: T): T {
   const clone = {
     ...session,
+    restTimer: session.restTimer ? { ...session.restTimer } : undefined,
     exercises: session.exercises.map((exercise) => ({
       ...exercise,
       sets: exercise.sets.map((set) => ({
@@ -245,10 +250,18 @@ export function createSessionService(
       })
     },
 
-    async logSet(sessionExerciseId: string, setId: string, actual: { weight: number; reps: number }) {
+    async logSet(
+      sessionExerciseId: string,
+      setId: string,
+      actual: { weight: number; reps: number },
+      restSeconds?: number,
+    ) {
       return mutate(() => withSessionLogLock(async () => {
         if (!Number.isFinite(actual.weight) || actual.weight < 0) throw new Error('Set weight must be zero or greater')
         if (!Number.isInteger(actual.reps) || actual.reps <= 0) throw new Error('Set reps must be a positive whole number')
+        if (restSeconds !== undefined && (!Number.isInteger(restSeconds) || restSeconds <= 0)) {
+          throw new Error('Rest duration must be a positive whole number of seconds')
+        }
         const active = await repository.getActive()
         const activeExercise = active?.exercises.find(({ id }) => id === sessionExerciseId)
         const activeSet = activeExercise?.sets.find(({ id }) => id === setId)
@@ -278,6 +291,12 @@ export function createSessionService(
           const updated: WorkoutSession = {
             ...current,
             updatedAt: timestamp,
+            ...(restSeconds === undefined ? {} : {
+              restTimer: {
+                startedAt: timestamp,
+                endsAt: new Date(Date.parse(timestamp) + restSeconds * 1000).toISOString(),
+              },
+            }),
             exercises: current.exercises.map((exercise) => exercise.id === sessionExerciseId
               ? {
                   ...exercise,

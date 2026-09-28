@@ -30,6 +30,30 @@ async function createTrainingContext() {
 }
 
 describe('active workout session service', () => {
+  it('restTimer_logSet_reload_restoresTheRunningTimer', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const service = createSessionService(repository, context.workoutService, context.exerciseService, {
+      now: () => '2026-09-28T13:15:00.000Z',
+    })
+    const started = await service.start(context.template.id, context.gym.name)
+
+    await service.logSet(
+      started.exercises[0].id,
+      started.exercises[0].sets[0].id,
+      { weight: 20, reps: 10 },
+      90,
+    )
+
+    const reloadedService = createSessionService(repository, context.workoutService, context.exerciseService)
+    await expect(reloadedService.getActive()).resolves.toMatchObject({
+      restTimer: {
+        startedAt: '2026-09-28T13:15:00.000Z',
+        endsAt: '2026-09-28T13:16:30.000Z',
+      },
+    })
+  })
+
   it('detects weight and set-volume PRs from completed history while excluding skipped sets', async () => {
     const context = await createTrainingContext()
     const repository = createMemorySessionRepository()
