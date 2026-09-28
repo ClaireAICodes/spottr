@@ -352,6 +352,24 @@ export function createSessionService(
       }))
     },
 
+    async moveExercise(sessionExerciseId: string, direction: 'up' | 'down') {
+      return mutate(async () => {
+        const timestamp = now()
+        const session = await repository.updateActive((current) => {
+          const currentIndex = current.exercises.findIndex(({ id }) => id === sessionExerciseId)
+          if (currentIndex === -1) throw new Error('Session exercise not found')
+          const nextIndex = currentIndex + (direction === 'up' ? -1 : 1)
+          if (nextIndex < 0 || nextIndex >= current.exercises.length) {
+            throw new Error(`Exercise is already ${direction === 'up' ? 'first' : 'last'}`)
+          }
+          const exercises = [...current.exercises]
+          ;[exercises[currentIndex], exercises[nextIndex]] = [exercises[nextIndex], exercises[currentIndex]]
+          return { ...current, exercises, updatedAt: timestamp }
+        })
+        return cloneSession(session)
+      })
+    },
+
     async complete() {
       return mutate(async () => {
         const endedAt = now()

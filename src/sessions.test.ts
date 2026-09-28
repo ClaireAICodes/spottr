@@ -259,6 +259,22 @@ describe('active workout session service', () => {
     expect(await context.workoutService.get(context.template.id)).toEqual(context.template)
   })
 
+  it('reorders only the active session and restores that order after reopening', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const service = createSessionService(repository, context.workoutService, context.exerciseService, {
+      now: () => '2026-09-28T07:30:00.000Z',
+    })
+    const started = await service.start(context.template.id, context.gym.name)
+
+    const reordered = await service.moveExercise(started.exercises[1].id, 'up')
+
+    expect(reordered.exercises.map(({ name }) => name)).toEqual(['Cable Row', 'Back Squat'])
+    expect((await createSessionService(repository, context.workoutService, context.exerciseService).getActive())
+      ?.exercises.map(({ name }) => name)).toEqual(['Cable Row', 'Back Squat'])
+    expect(await context.workoutService.get(context.template.id)).toEqual(context.template)
+  })
+
   it('persists the active snapshot and fast set log across an IndexedDB reopen', async () => {
     const context = await createTrainingContext()
     const databaseName = `spottr-sessions-${crypto.randomUUID()}`

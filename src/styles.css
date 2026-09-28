@@ -375,7 +375,13 @@ p { color: var(--muted); line-height: 1.55; }
 .active-session-heading > svg { padding: 10px; width: 52px; height: 52px; border-radius: 15px; color: #fff; background: var(--ink); }
 .session-exercises { display: grid; gap: 16px; }
 .session-exercise { min-height: 0; padding: 22px; }
-.session-exercise h3 { margin: 0 0 18px; font-size: 1.25rem; }
+.session-exercise h3 { margin: 0; font-size: 1.25rem; }
+.session-exercise-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+.session-exercise-heading p { margin: 0 0 3px; color: var(--muted); font-size: .7rem; font-weight: 850; letter-spacing: .05em; text-transform: uppercase; }
+.session-exercise-controls { display: grid; grid-template-columns: repeat(4, 44px); gap: 6px; }
+.session-exercise-controls button { width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); background: #fff; cursor: pointer; }
+.session-exercise-controls button:disabled { color: #969187; background: var(--surface); cursor: default; }
+.session-exercise h3:focus-visible { outline: 3px solid var(--signal); outline-offset: 4px; }
 .session-set-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .session-set-list li { display: grid; grid-template-columns: 34px minmax(90px, 1fr) minmax(80px, .8fr) auto; align-items: end; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
 .session-set-list li.logged { background: #eef9d8; }
@@ -482,6 +488,8 @@ p { color: var(--muted); line-height: 1.55; }
   .set-targets li label:first-of-type { grid-column: 2 / -1; }
   .set-targets .compact-actions { grid-column: 1 / -1; }
   .set-targets .compact-actions button { flex: 1; width: auto; }
+  .session-exercise-heading { align-items: flex-start; }
+  .session-exercise-controls { grid-template-columns: repeat(2, 44px); }
   .session-set-list li { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr); }
   .session-set-actions { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .finish-session, .history-card-heading { align-items: stretch; flex-direction: column; }
