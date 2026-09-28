@@ -857,6 +857,40 @@ describe('active workout session journey', () => {
     expect(screen.getByRole('button', { name: /logged back squat set 1/i })).toBeDisabled()
   })
 
+  it('skips a set for now, restores that state, and lets the user return to log it', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'North Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const squat = await exerciseService.create({ name: 'Back Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const template = await workoutService.create({
+      name: 'Flexible Strength',
+      gymId: gym.id,
+      exercises: [{ exerciseId: squat.id, sets: [{ kind: 'working', weight: 80, reps: 5 }] }],
+    })
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService, {
+      now: () => '2026-09-28T01:30:00.000Z',
+    })
+    const firstRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+
+    await user.click(await screen.findByRole('button', { name: /start workout at north gym/i }))
+    await user.click(screen.getByRole('button', { name: /start flexible strength/i }))
+    await user.click(screen.getByRole('button', { name: /skip back squat set 1/i }))
+    expect(await screen.findByText(/0 of 1 sets logged · 1 skipped/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/back squat set 1 weight/i)).toBeDisabled()
+    expect(screen.getByRole('button', { name: /return to back squat set 1/i })).toBeInTheDocument()
+
+    firstRender.unmount()
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+    await user.click(await screen.findByRole('button', { name: /resume flexible strength/i }))
+    await user.click(screen.getByRole('button', { name: /return to back squat set 1/i }))
+    expect(await screen.findByText(/0 of 1 sets logged · 0 skipped/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /log back squat set 1/i }))
+    expect(await screen.findByText(/1 of 1 sets logged · 0 skipped/i)).toBeInTheDocument()
+    expect(await workoutService.get(template.id)).toEqual(template)
+  })
+
   it('announces session storage failures instead of showing an empty resume state', async () => {
     const workoutService = createWorkoutService(createMemoryWorkoutRepository())
     const exerciseService = createExerciseService(createMemoryExerciseRepository())

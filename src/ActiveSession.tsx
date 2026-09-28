@@ -34,6 +34,7 @@ export function ActiveSession({
   const [feedback, setFeedback] = useState<{ message: string; sequence: number } | null>(null)
   const allSets = session.exercises.flatMap((exercise) => exercise.sets)
   const completedSets = allSets.filter(({ completedAt }) => completedAt).length
+  const skippedSets = allSets.filter(({ skippedAt }) => skippedAt).length
   const remainingSets = allSets.length - completedSets
 
   useEffect(() => {
@@ -95,6 +96,26 @@ export function ActiveSession({
     }
   }
 
+  async function changeSetAvailability(exerciseId: string, setId: string, skipped: boolean) {
+    setPendingSetIds((current) => new Set(current).add(setId))
+    setError('')
+    try {
+      const updated = skipped
+        ? await sessionService.returnSet(exerciseId, setId)
+        : await sessionService.skipSet(exerciseId, setId)
+      setSession(updated)
+      onSessionChange(updated)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The set could not be updated.')
+    } finally {
+      setPendingSetIds((current) => {
+        const next = new Set(current)
+        next.delete(setId)
+        return next
+      })
+    }
+  }
+
   async function finish() {
     if (isFinishing) return
     setIsFinishing(true)
@@ -116,7 +137,7 @@ export function ActiveSession({
         <div>
           <p className="eyebrow">Active session</p>
           <h2>{session.name}</h2>
-          <p>{completedSets} of {allSets.length} sets logged</p>
+          <p>{completedSets} of {allSets.length} sets logged · {skippedSets} skipped</p>
         </div>
         <Dumbbell size={30} aria-hidden="true" />
       </div>
@@ -130,14 +151,23 @@ export function ActiveSession({
               {exercise.sets.map((set, index) => {
                 const label = `${exercise.name} set ${index + 1}`
                 const completed = Boolean(set.completedAt)
+                const skipped = Boolean(set.skippedAt)
+                const pending = pendingSetIds.has(set.id)
                 return (
-                  <li key={set.id} className={completed ? 'logged' : undefined}>
+                  <li key={set.id} className={completed ? 'logged' : skipped ? 'skipped' : undefined}>
                     <span className="set-number">{index + 1}</span>
-                    <label>{label} weight ({settings.weightUnit})<input type="number" min="0" step="0.1" disabled={completed || pendingSetIds.has(set.id)} value={values[set.id].weight} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], weight: event.target.value } })} /></label>
-                    <label>{label} reps<input type="number" min="1" step="1" disabled={completed || pendingSetIds.has(set.id)} value={values[set.id].reps} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], reps: event.target.value } })} /></label>
-                    <button type="button" disabled={completed || pendingSetIds.has(set.id)} aria-label={`${completed ? 'Logged' : 'Log'} ${label}`} onClick={() => void logSet(exercise.id, set.id)}>
-                      <Check size={17} aria-hidden="true" /> {completed ? 'Logged' : pendingSetIds.has(set.id) ? 'Logging…' : 'Log set'}
-                    </button>
+                    <label>{label} weight ({settings.weightUnit})<input type="number" min="0" step="0.1" disabled={completed || skipped || pending} value={values[set.id].weight} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], weight: event.target.value } })} /></label>
+                    <label>{label} reps<input type="number" min="1" step="1" disabled={completed || skipped || pending} value={values[set.id].reps} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], reps: event.target.value } })} /></label>
+                    <div className="session-set-actions">
+                      <button type="button" disabled={completed || skipped || pending} aria-label={`${completed ? 'Logged' : skipped ? 'Skipped' : 'Log'} ${label}`} onClick={() => void logSet(exercise.id, set.id)}>
+                        <Check size={17} aria-hidden="true" /> {completed ? 'Logged' : skipped ? 'Skipped' : pending ? 'Updating…' : 'Log set'}
+                      </button>
+                      {!completed && (
+                        <button type="button" className="set-skip-button" disabled={pending} aria-label={`${skipped ? 'Return to' : 'Skip'} ${label}`} onClick={() => void changeSetAvailability(exercise.id, set.id, skipped)}>
+                          {pending ? 'Updating…' : skipped ? 'Return to set' : 'Skip for now'}
+                        </button>
+                      )}
+                    </div>
                   </li>
                 )
               })}

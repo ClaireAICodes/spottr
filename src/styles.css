@@ -379,10 +379,13 @@ p { color: var(--muted); line-height: 1.55; }
 .session-set-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .session-set-list li { display: grid; grid-template-columns: 34px minmax(90px, 1fr) minmax(80px, .8fr) auto; align-items: end; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
 .session-set-list li.logged { background: #eef9d8; }
+.session-set-list li.skipped { background: var(--surface); }
 .session-set-list label { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: .64rem; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
 .session-set-list input { width: 100%; min-width: 0; min-height: 44px; padding: 8px; border: 1px solid #aaa69c; border-radius: 10px; background: #fff; color: var(--ink); font: inherit; }
 .session-set-list button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--ink); border-radius: 11px; color: #fff; background: var(--ink); font-weight: 850; cursor: pointer; }
 .session-set-list button:disabled { border-color: #507227; color: #315000; background: var(--signal); cursor: default; }
+.session-set-actions { display: grid; gap: 6px; }
+.session-set-list .set-skip-button { border-color: var(--line); color: var(--ink); background: #fff; }
 .session-feedback { margin-bottom: 16px; padding: 12px 14px; border: 1px solid #507227; border-radius: 13px; color: #315000; background: #eef9d8; font-weight: 850; }
 .pr-celebration { animation: record-pop 420ms ease-out; }
 @keyframes record-pop { from { transform: scale(.98); opacity: .35; } to { transform: scale(1); opacity: 1; } }
@@ -480,7 +483,7 @@ p { color: var(--muted); line-height: 1.55; }
   .set-targets .compact-actions { grid-column: 1 / -1; }
   .set-targets .compact-actions button { flex: 1; width: auto; }
   .session-set-list li { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr); }
-  .session-set-list button { grid-column: 1 / -1; }
+  .session-set-actions { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .finish-session, .history-card-heading { align-items: stretch; flex-direction: column; }
   .finish-session .action-button, .history-card-heading button { width: 100%; }
   .summary-metrics, .summary-reserved { grid-template-columns: repeat(2, minmax(0, 1fr)); }

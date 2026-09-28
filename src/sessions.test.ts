@@ -231,6 +231,34 @@ describe('active workout session service', () => {
     expect(resumed).toEqual(logged)
   })
 
+  it('lets a user skip and return to a set without mutating the workout template', async () => {
+    const context = await createTrainingContext()
+    const service = createSessionService(
+      createMemorySessionRepository(),
+      context.workoutService,
+      context.exerciseService,
+      { now: () => '2026-09-28T01:30:00.000Z' },
+    )
+    const started = await service.start(context.template.id, context.gym.name)
+    const exercise = started.exercises[0]
+    const set = exercise.sets[0]
+
+    const skipped = await service.skipSet(exercise.id, set.id)
+    expect(skipped.exercises[0].sets[0]).toMatchObject({
+      completedAt: null,
+      skippedAt: '2026-09-28T01:30:00.000Z',
+    })
+    await expect(service.logSet(exercise.id, set.id, { weight: 22.5, reps: 9 }))
+      .rejects.toThrow('Return to the skipped set before logging it')
+
+    const returned = await service.returnSet(exercise.id, set.id)
+    expect(returned.exercises[0].sets[0]).toMatchObject({ completedAt: null, skippedAt: null })
+    await service.logSet(exercise.id, set.id, { weight: 22.5, reps: 9 })
+    await expect(service.skipSet(exercise.id, set.id)).rejects.toThrow('Completed sets cannot be skipped')
+
+    expect(await context.workoutService.get(context.template.id)).toEqual(context.template)
+  })
+
   it('persists the active snapshot and fast set log across an IndexedDB reopen', async () => {
     const context = await createTrainingContext()
     const databaseName = `spottr-sessions-${crypto.randomUUID()}`

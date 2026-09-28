@@ -251,7 +251,9 @@ export function createSessionService(
         if (!Number.isInteger(actual.reps) || actual.reps <= 0) throw new Error('Set reps must be a positive whole number')
         const active = await repository.getActive()
         const activeExercise = active?.exercises.find(({ id }) => id === sessionExerciseId)
-        if (!activeExercise?.sets.some(({ id }) => id === setId)) throw new Error('Session set not found')
+        const activeSet = activeExercise?.sets.find(({ id }) => id === setId)
+        if (!activeExercise || !activeSet) throw new Error('Session set not found')
+        if (activeSet.skippedAt) throw new Error('Return to the skipped set before logging it')
         const historicalSets = (await repository.listHistory())
           .flatMap(({ exercises }) => exercises)
           .filter(({ exerciseId }) => exerciseId === activeExercise.exerciseId)
@@ -283,7 +285,62 @@ export function createSessionService(
                     if (set.id !== setId) return set
                     found = true
                     if (set.completedAt) throw new Error('Set already logged')
+                    if (set.skippedAt) throw new Error('Return to the skipped set before logging it')
                     return { ...set, ...actual, completedAt: timestamp, personalRecords }
+                  }),
+                }
+              : exercise),
+          }
+          if (!found) throw new Error('Session set not found')
+          return updated
+        })
+        return cloneSession(session)
+      }))
+    },
+
+    async skipSet(sessionExerciseId: string, setId: string) {
+      return mutate(() => withSessionLogLock(async () => {
+        const timestamp = now()
+        const session = await repository.updateActive((current) => {
+          let found = false
+          const updated: WorkoutSession = {
+            ...current,
+            updatedAt: timestamp,
+            exercises: current.exercises.map((exercise) => exercise.id === sessionExerciseId
+              ? {
+                  ...exercise,
+                  sets: exercise.sets.map((set) => {
+                    if (set.id !== setId) return set
+                    found = true
+                    if (set.completedAt) throw new Error('Completed sets cannot be skipped')
+                    return set.skippedAt ? set : { ...set, skippedAt: timestamp }
+                  }),
+                }
+              : exercise),
+          }
+          if (!found) throw new Error('Session set not found')
+          return updated
+        })
+        return cloneSession(session)
+      }))
+    },
+
+    async returnSet(sessionExerciseId: string, setId: string) {
+      return mutate(() => withSessionLogLock(async () => {
+        const timestamp = now()
+        const session = await repository.updateActive((current) => {
+          let found = false
+          const updated: WorkoutSession = {
+            ...current,
+            updatedAt: timestamp,
+            exercises: current.exercises.map((exercise) => exercise.id === sessionExerciseId
+              ? {
+                  ...exercise,
+                  sets: exercise.sets.map((set) => {
+                    if (set.id !== setId) return set
+                    found = true
+                    if (set.completedAt) throw new Error('Completed sets cannot be returned')
+                    return set.skippedAt ? { ...set, skippedAt: null } : set
                   }),
                 }
               : exercise),
