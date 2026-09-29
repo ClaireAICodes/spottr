@@ -755,6 +755,49 @@ describe('active workout session journey', () => {
     expect(screen.getByRole('timer', { name: /rest timer/i })).toBeInTheDocument()
   })
 
+  it('downloads a complete backup from Settings', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'Backup Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const exercise = await exerciseService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    await workoutService.create({
+      name: 'Backup Workout',
+      gymId: gym.id,
+      exercises: [{ exerciseId: exercise.id, sets: [{ kind: 'working', weight: 20, reps: 5 }] }],
+    })
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    const settingsService = createSettingsService(createMemorySettingsRepository())
+    const downloadedFiles: Blob[] = []
+    const originalCreateObjectUrl = URL.createObjectURL
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    const originalLinkClick = HTMLAnchorElement.prototype.click
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: (blob: Blob) => { downloadedFiles.push(blob); return 'blob:spottr-backup' },
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => undefined })
+    HTMLAnchorElement.prototype.click = () => undefined
+
+    try {
+      render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} settingsService={settingsService} />)
+      await user.click(screen.getByRole('tab', { name: /settings/i }))
+      await user.click(await screen.findByRole('button', { name: /download backup/i }))
+
+      expect(await screen.findByRole('status')).toHaveTextContent(/backup downloaded/i)
+      expect(downloadedFiles).toHaveLength(1)
+      const downloaded = downloadedFiles[0] as File
+      expect(downloaded).toBeInstanceOf(File)
+      expect(downloaded.name).toMatch(/^spottr-backup-.*\.json$/)
+      expect(downloaded.type).toBe('application/json')
+    } finally {
+      Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreateObjectUrl })
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectUrl })
+      HTMLAnchorElement.prototype.click = originalLinkClick
+    }
+  })
+
   it('finishes a partial workout, shows its summary, and restores set-level history after reload', async () => {
     const user = userEvent.setup()
     const gymService = createGymService(createMemoryGymRepository())

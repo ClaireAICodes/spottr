@@ -292,7 +292,14 @@ export function App({
         ) : activeTab === 3 ? (
           <SessionHistory sessionService={activeSessionService} settings={settings} />
         ) : (
-          <SettingsView settingsService={settingsService} exerciseService={exerciseService} onSettingsChange={setSettings} />
+          <SettingsView
+            settingsService={settingsService}
+            exerciseService={exerciseService}
+            gymService={gymService}
+            workoutService={workoutService}
+            sessionService={activeSessionService}
+            onSettingsChange={setSettings}
+          />
         )}
       </main>
 

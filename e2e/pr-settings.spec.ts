@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const evidenceDir = resolve('evidence/screenshots')
@@ -54,6 +54,35 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
   await page.getByRole('tab', { name: 'Settings' }).click()
   await expect(page.getByLabel('Weight unit')).toHaveValue('lb')
   await expect(page.getByLabel('Rest duration (seconds)')).toHaveValue('120')
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download backup' }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toMatch(/^spottr-backup-.*\.json$/)
+  const downloadPath = await download.path()
+  expect(downloadPath).not.toBeNull()
+  const backup = JSON.parse(await readFile(downloadPath!, 'utf8'))
+  expect(backup).toMatchObject({
+    format: 'spottr-backup',
+    version: 1,
+    entities: {
+      selectedGymId: expect.any(String),
+      gyms: [{ name: 'North Gym' }],
+      exercises: [{
+        name: 'Back Squat',
+        media: [{
+          name: 'form.mp4',
+          mimeType: 'video/mp4',
+          size: 4,
+          content: { encoding: 'base64', data: 'Zm9ybQ==' },
+        }],
+      }],
+      workouts: [{ name: 'Lower Strength' }],
+      activeSession: null,
+      completedSessions: [],
+    },
+    settings: { weightUnit: 'lb', restSeconds: 120 },
+  })
+  await expect(page.getByRole('status').filter({ hasText: 'Backup downloaded' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
   await page.screenshot({ path: resolve(evidenceDir, 'spottr-settings-storage-390x844.png'), fullPage: true })
 

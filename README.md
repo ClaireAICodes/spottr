@@ -17,6 +17,7 @@ A fresh, local-only Spottr delivery foundation covering Phase 1A–1D, gym profi
 - global shared-exercise edits propagate through references while variations, copies, and removed templates stay isolated
 - independent workout snapshots with fast set logging, reload, resume, and template non-mutation
 - partial-workout completion summaries and durable newest-first set-by-set history
+- complete versioned JSON backup of entities, settings, and self-contained media bytes
 - offline reload support for previously loaded local app resources and exercise data
 - responsive layouts verified at 390×844, the populated workout editor at 393×844, and 1440×900
 
@@ -51,5 +52,6 @@ This checkpoint includes the bounded active-session start, fast-log, reload, res
 - `evidence/screenshots/spottr-active-session-390x844.png`
 - `evidence/screenshots/spottr-completion-history-390x844.png`
 - `evidence/active-session-verification.md`
+- `evidence/backup-export-verification.md`
 - `evidence/no-w38-reuse-proof.md`
 - `evidence/verification.md`
