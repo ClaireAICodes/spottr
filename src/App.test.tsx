@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from './App'
+import { createSpottrBackup, MAX_BACKUP_FILE_BYTES } from './backup'
 import { createExerciseService, createMemoryExerciseRepository } from './exercises'
 import { createGymService, createMemoryGymRepository } from './gyms'
 import { createMemorySessionRepository, createSessionService } from './sessions'
@@ -796,6 +797,81 @@ describe('active workout session journey', () => {
       Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectUrl })
       HTMLAnchorElement.prototype.click = originalLinkClick
     }
+  })
+
+  it('rejects a malformed backup before changing current data', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const gym = await gymService.create({ name: 'Current Gym', address: '1 Main Street' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const exercise = await exerciseService.create({ name: 'Current Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: 'Keep this' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const workout = await workoutService.create({
+      name: 'Current Workout',
+      gymId: gym.id,
+      exercises: [{ exerciseId: exercise.id, sets: [{ kind: 'working', weight: 20, reps: 5 }] }],
+    })
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    const settingsService = createSettingsService(createMemorySettingsRepository({
+      weightUnit: 'lb',
+      progressiveOverloadCues: false,
+      prCelebrations: false,
+      restTimerEnabled: true,
+      restSeconds: 120,
+    }))
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} settingsService={settingsService} />)
+    await user.click(screen.getByRole('tab', { name: /settings/i }))
+
+    await user.upload(
+      await screen.findByLabelText(/choose backup file/i),
+      new File(['{}'], 'malformed.json', { type: 'application/json' }),
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not a valid spottr backup/i)
+    expect(await gymService.list()).toEqual([gym])
+    expect(await exerciseService.search()).toEqual([exercise])
+    expect(await workoutService.list()).toEqual([workout])
+    expect(await settingsService.get()).toMatchObject({ weightUnit: 'lb', restSeconds: 120 })
+  })
+
+  it('rejects an incompatible backup version before changing current data', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const currentGym = await gymService.create({ name: 'Current Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    const settingsService = createSettingsService(createMemorySettingsRepository())
+    const backup = await createSpottrBackup({ gymService, exerciseService, workoutService, sessionService, settingsService })
+    const incompatible = { ...backup, version: 2 }
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} settingsService={settingsService} />)
+    await user.click(screen.getByRole('tab', { name: /settings/i }))
+
+    await user.upload(
+      await screen.findByLabelText(/choose backup file/i),
+      new File([JSON.stringify(incompatible)], 'future-backup.json', { type: 'application/json' }),
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/backup version 2 is not supported/i)
+    expect(await gymService.list()).toEqual([currentGym])
+  })
+
+  it('rejects an oversized backup before reading or changing current data', async () => {
+    const user = userEvent.setup()
+    const gymService = createGymService(createMemoryGymRepository())
+    const currentGym = await gymService.create({ name: 'Current Gym', address: '' })
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    const oversized = new File(['{}'], 'oversized.json', { type: 'application/json' })
+    Object.defineProperty(oversized, 'size', { value: MAX_BACKUP_FILE_BYTES + 1 })
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
+    await user.click(screen.getByRole('tab', { name: /settings/i }))
+
+    await user.upload(await screen.findByLabelText(/choose backup file/i), oversized)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/backup file is too large/i)
+    expect(await gymService.list()).toEqual([currentGym])
   })
 
   it('finishes a partial workout, shows its summary, and restores set-level history after reload', async () => {

@@ -83,7 +83,25 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
     settings: { weightUnit: 'lb', restSeconds: 120 },
   })
   await expect(page.getByRole('status').filter({ hasText: 'Backup downloaded' })).toBeVisible()
+  const backupInput = page.getByLabel('Choose backup file')
+  await backupInput.setInputFiles({
+    name: 'spottr-backup.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(backup)),
+  })
+  await expect(page.getByRole('status').filter({ hasText: 'compatible and ready' })).toBeVisible()
+  await backupInput.setInputFiles({ name: 'malformed.json', mimeType: 'application/json', buffer: Buffer.from('{}') })
+  await expect(page.getByRole('alert')).toContainText('not a valid Spottr backup')
+  await backupInput.setInputFiles({
+    name: 'future-backup.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ ...backup, version: 2 })),
+  })
+  await expect(page.getByRole('alert')).toContainText('backup version 2 is not supported')
+  await expect(page.getByLabel('Weight unit')).toHaveValue('lb')
+  await expect(page.getByLabel('Rest duration (seconds)')).toHaveValue('120')
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+  await page.screenshot({ path: resolve(evidenceDir, 'spottr-backup-import-validation-390x844.png'), fullPage: true })
   await page.screenshot({ path: resolve(evidenceDir, 'spottr-settings-storage-390x844.png'), fullPage: true })
 
   await page.getByRole('tab', { name: 'Home' }).click()

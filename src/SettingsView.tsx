@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Database, Download, Save } from 'lucide-react'
-import { createSpottrBackup, downloadSpottrBackup, serializeSpottrBackup } from './backup'
+import { Database, Download, Save, Upload } from 'lucide-react'
+import { createSpottrBackup, downloadSpottrBackup, MAX_BACKUP_FILE_BYTES, parseSpottrBackup, serializeSpottrBackup } from './backup'
 import type { ExerciseService } from './exercises'
 import type { GymService } from './gyms'
 import { ActionButton, Panel } from './primitives'
@@ -34,8 +34,10 @@ export function SettingsView({
   const [storageStatus, setStorageStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'saved' | 'error'>('loading')
   const [backupStatus, setBackupStatus] = useState<'idle' | 'exporting' | 'downloaded' | 'error'>('idle')
+  const [importStatus, setImportStatus] = useState<'idle' | 'validating' | 'valid' | 'error'>('idle')
   const [error, setError] = useState('')
   const [backupError, setBackupError] = useState('')
+  const [importError, setImportError] = useState('')
 
   useEffect(() => {
     let current = true
@@ -92,6 +94,27 @@ export function SettingsView({
     }
   }
 
+  async function validateImport(file: File) {
+    setImportStatus('validating')
+    setImportError('')
+    try {
+      if (file.size > MAX_BACKUP_FILE_BYTES) {
+        throw new Error('This backup file is too large. Your saved data has not been changed.')
+      }
+      const serialized = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result))
+        reader.onerror = () => reject(reader.error ?? new Error('The backup file could not be read.'))
+        reader.readAsText(file)
+      })
+      parseSpottrBackup(serialized)
+      setImportStatus('valid')
+    } catch (caught) {
+      setImportError(caught instanceof Error ? caught.message : 'This file is not a valid Spottr backup. Your saved data has not been changed.')
+      setImportStatus('error')
+    }
+  }
+
   return (
     <section id="main-view" role="tabpanel" aria-labelledby="tab-settings" className="settings-view">
       <div className="section-heading">
@@ -125,6 +148,23 @@ export function SettingsView({
             </ActionButton>
             {backupStatus === 'downloaded' && <p role="status">Backup downloaded.</p>}
             {backupError && <p role="alert" className="form-message error-copy">{backupError}</p>}
+            <label>
+              Choose backup file
+              <input
+                type="file"
+                accept="application/json,.json"
+                disabled={importStatus === 'validating'}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file) void validateImport(file)
+                  event.target.value = ''
+                }}
+              />
+            </label>
+            <p>Spottr checks the complete file before any restore can change your saved data.</p>
+            {importStatus === 'validating' && <p role="status"><Upload size={18} aria-hidden="true" /> Checking backup…</p>}
+            {importStatus === 'valid' && <p role="status">Backup is compatible and ready to restore.</p>}
+            {importError && <p role="alert" className="form-message error-copy">{importError}</p>}
           </Panel>
           <div className="settings-save">
             <ActionButton type="submit" disabled={status === 'saving'}><Save size={18} aria-hidden="true" /> {status === 'saving' ? 'Saving…' : 'Save settings'}</ActionButton>
