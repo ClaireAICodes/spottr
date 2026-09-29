@@ -184,6 +184,7 @@ function isSessionSet(value: unknown, start: string, end: string, completedSessi
       && value.personalRecords.every((record) => record === 'weight' || record === 'set-volume')))
     && (value.targetDecision === undefined || ['accepting', 'declining', 'accepted', 'declined'].includes(String(value.targetDecision)))
     && (!hasTargetDecision || (completedSession && Boolean(value.completedAt) && !value.skippedAt))
+    && (!hasTargetDecision || value.weight !== value.targetWeight || value.reps !== value.targetReps)
     && (previousTarget === undefined || (isRecord(previousTarget)
       && typeof previousTarget.weight === 'number' && Number.isFinite(previousTarget.weight) && previousTarget.weight >= 0
       && typeof previousTarget.reps === 'number' && Number.isSafeInteger(previousTarget.reps) && previousTarget.reps > 0))
@@ -200,6 +201,7 @@ function isSession(value: unknown, completed: boolean) {
     && isNonBlankString(value.gymId)
     && isNonBlankString(value.gymName)
     && isChronological(value.startedAt, value.updatedAt)
+    && value.exercises.length > 0
     && (value.restTimer === undefined || (isRecord(value.restTimer)
       && isTimestamp(value.restTimer.startedAt)
       && isTimestamp(value.restTimer.endsAt)
@@ -210,6 +212,7 @@ function isSession(value: unknown, completed: boolean) {
       && isNonBlankString(exercise.exerciseId)
       && isNonBlankString(exercise.name)
       && Array.isArray(exercise.sets)
+      && exercise.sets.length > 0
       && hasUniqueIds(exercise.sets)
       && exercise.sets.every((set) => isSessionSet(set, value.startedAt as string, sessionEnd as string, completed))
       && (!completed || (exercise.sets as Array<Record<string, unknown>>).every((set) => {

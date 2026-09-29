@@ -62,20 +62,45 @@ describe('Spottr backup export', () => {
       name: workout.name,
       gymId: gym.id,
       gymName: gym.name,
-      exercises: [],
+      exercises: [{
+        id: 'session-exercise-active',
+        templateExerciseId: workout.exercises[0].id,
+        exerciseId: exercise.id,
+        name: exercise.name,
+        sets: [{
+          id: 'session-set-active',
+          templateSetId: workout.exercises[0].sets[0].id,
+          kind: 'working',
+          targetWeight: 100,
+          targetReps: 5,
+          weight: 100,
+          reps: 5,
+          completedAt: null,
+          skippedAt: null,
+        }],
+      }],
       startedAt: timestamp,
       updatedAt: timestamp,
     }
     const completedSession: CompletedWorkoutSession = {
       ...activeSession,
       id: 'session-completed',
+      exercises: [{
+        ...activeSession.exercises[0],
+        id: 'session-exercise-completed',
+        sets: [{
+          ...activeSession.exercises[0].sets[0],
+          id: 'session-set-completed',
+          completedAt: timestamp,
+        }],
+      }],
       endedAt: timestamp,
       summary: {
-        completedExercises: 0,
+        completedExercises: 1,
         skippedExercises: 0,
-        completedSets: 0,
+        completedSets: 1,
         skippedSets: 0,
-        volume: 0,
+        volume: 500,
         durationSeconds: 0,
       },
     }
@@ -153,7 +178,7 @@ describe('Spottr backup export', () => {
     expect(() => parseSpottrBackup(JSON.stringify(duplicateWorkoutExercise))).toThrow(/not a valid Spottr backup/i)
 
     const incorrectSummary = structuredClone(backup)
-    incorrectSummary.entities.completedSessions[0].summary.completedSets = 1
+    incorrectSummary.entities.completedSessions[0].summary.completedSets = 0
     expect(() => parseSpottrBackup(JSON.stringify(incorrectSummary))).toThrow(/not a valid Spottr backup/i)
 
     const conflictingSessionState = structuredClone(backup)
@@ -198,6 +223,26 @@ describe('Spottr backup export', () => {
       },
     ]
     expect(() => parseSpottrBackup(JSON.stringify(duplicateSessionExercise))).toThrow(/not a valid Spottr backup/i)
+
+    const emptyActiveSession = structuredClone(backup)
+    emptyActiveSession.entities.activeSession!.exercises = []
+    expect(() => parseSpottrBackup(JSON.stringify(emptyActiveSession))).toThrow(/not a valid Spottr backup/i)
+
+    const emptyCompletedSession = structuredClone(backup)
+    emptyCompletedSession.entities.completedSessions[0].exercises = []
+    emptyCompletedSession.entities.completedSessions[0].summary = {
+      completedExercises: 0,
+      skippedExercises: 0,
+      completedSets: 0,
+      skippedSets: 0,
+      volume: 0,
+      durationSeconds: 0,
+    }
+    expect(() => parseSpottrBackup(JSON.stringify(emptyCompletedSession))).toThrow(/not a valid Spottr backup/i)
+
+    const emptySessionSets = structuredClone(backup)
+    emptySessionSets.entities.activeSession!.exercises[0].sets = []
+    expect(() => parseSpottrBackup(JSON.stringify(emptySessionSets))).toThrow(/not a valid Spottr backup/i)
 
     const decisionOnSkippedSet = structuredClone(backup)
     decisionOnSkippedSet.entities.completedSessions[0].exercises = [{
@@ -252,6 +297,10 @@ describe('Spottr backup export', () => {
       durationSeconds: 0,
     }
     expect(() => parseSpottrBackup(JSON.stringify(pendingDecisionWithoutTemplateReferences))).toThrow(/not a valid Spottr backup/i)
+
+    const decisionMatchingTarget = structuredClone(backup)
+    decisionMatchingTarget.entities.completedSessions[0].exercises[0].sets[0].targetDecision = 'accepted'
+    expect(() => parseSpottrBackup(JSON.stringify(decisionMatchingTarget))).toThrow(/not a valid Spottr backup/i)
 
     const setBeforeSession = structuredClone(pendingDecisionWithoutTemplateReferences)
     delete setBeforeSession.entities.completedSessions[0].exercises[0].sets[0].targetDecision
