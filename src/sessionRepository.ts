@@ -208,6 +208,19 @@ export function createIndexedDbSessionRepository(databaseName = 'spottr-v1-sessi
         transaction.onabort = () => reject(updateError ?? transaction.error ?? new Error('Local storage transaction was cancelled'))
       })
     },
+    async replaceAll(active, history) {
+      const database = await openDatabase()
+      const transaction = database.transaction(SESSIONS_STORE, 'readwrite')
+      const store = transaction.objectStore(SESSIONS_STORE)
+      store.clear()
+      if (active) store.put(active, ACTIVE_SESSION_KEY)
+      history.forEach((session) => store.put(session, `${HISTORY_KEY_PREFIX}${session.id}`))
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error ?? new Error('Local storage transaction failed'))
+        transaction.onabort = () => reject(transaction.error ?? new Error('Local storage transaction was cancelled'))
+      })
+    },
     async close() {
       if (!databasePromise) return
       const database = await databasePromise

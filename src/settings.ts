@@ -22,7 +22,9 @@ export interface SettingsRepository {
   close?(): Promise<void>
 }
 
-export type SettingsService = ReturnType<typeof createSettingsService>
+export type SettingsService = Omit<ReturnType<typeof createSettingsService>, 'waitForIdle'> & {
+  waitForIdle?: () => Promise<void>
+}
 
 function normalize(settings: AppSettings): AppSettings {
   if (!['kg', 'lb'].includes(settings.weightUnit)) throw new Error('Choose a valid weight unit')
@@ -33,15 +35,25 @@ function normalize(settings: AppSettings): AppSettings {
 }
 
 export function createSettingsService(repository: SettingsRepository) {
+  let updateQueue: Promise<void> = Promise.resolve()
+
   return {
     async get() {
       const stored = await repository.get()
       return stored ? { ...DEFAULT_SETTINGS, ...stored } : { ...DEFAULT_SETTINGS }
     },
     async update(settings: AppSettings) {
-      const normalized = normalize(settings)
-      await repository.save(normalized)
-      return { ...normalized }
+      const update = async () => {
+        const normalized = normalize(settings)
+        await repository.save(normalized)
+        return { ...normalized }
+      }
+      const result = updateQueue.then(update, update)
+      updateQueue = result.then(() => undefined, () => undefined)
+      return result
+    },
+    async waitForIdle() {
+      await updateQueue
     },
   }
 }

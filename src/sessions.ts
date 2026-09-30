@@ -61,10 +61,13 @@ export interface SessionRepository {
   listHistory(): Promise<CompletedWorkoutSession[]>
   getHistory(id: string): Promise<CompletedWorkoutSession | null>
   updateHistory(id: string, update: (session: CompletedWorkoutSession) => CompletedWorkoutSession): Promise<CompletedWorkoutSession>
+  replaceAll(active: WorkoutSession | null, history: CompletedWorkoutSession[]): Promise<void>
   close?(): Promise<void>
 }
 
-export type SessionService = ReturnType<typeof createSessionService>
+export type SessionService = Omit<ReturnType<typeof createSessionService>, 'waitForIdle'> & {
+  waitForIdle?: () => Promise<void>
+}
 
 type SessionServiceOptions = {
   createId?: () => string
@@ -554,6 +557,14 @@ export function createSessionService(
         return cloneSession(await updateTargetDecision(sessionId, sessionExerciseId, setId, 'declined'))
       }))
     },
+
+    async replaceAll(active: WorkoutSession | null, history: CompletedWorkoutSession[]) {
+      await mutate(() => repository.replaceAll(active, history))
+    },
+
+    async waitForIdle() {
+      await mutationQueue
+    },
   }
 }
 
@@ -598,6 +609,11 @@ export function createMemorySessionRepository(
       const updated = cloneSession(update(cloneSession(session)))
       history.set(id, updated)
       return cloneSession(updated)
+    },
+    async replaceAll(nextActive, nextHistory) {
+      active = nextActive ? cloneSession(nextActive) : null
+      history.clear()
+      nextHistory.forEach((session) => history.set(session.id, cloneSession(session)))
     },
   }
 }

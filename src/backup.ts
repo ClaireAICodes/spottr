@@ -1,7 +1,9 @@
 import {
   EXERCISE_IMAGE_MAX_BYTES,
+  EXERCISE_IMAGE_MAX_PIXELS,
   EXERCISE_MEDIA_TOTAL_BYTES,
   EXERCISE_VIDEO_MAX_BYTES,
+  readSafeImageDimensionsFromBytes,
   type Exercise,
   type ExerciseService,
 } from './exercises'
@@ -105,13 +107,28 @@ function isGym(value: unknown) {
       && typeof location.accuracy === 'number' && Number.isFinite(location.accuracy)))
 }
 
-function decodedBase64Size(value: unknown) {
+function decodeBase64(value: unknown) {
   if (!isString(value) || value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return null
   try {
     const decoded = atob(value)
-    return btoa(decoded) === value ? decoded.length : null
+    if (btoa(decoded) !== value) return null
+    return Uint8Array.from(decoded, (character) => character.charCodeAt(0))
   } catch {
     return null
+  }
+}
+
+function isSafeEncodedMedia(value: Record<string, unknown>) {
+  if (!isRecord(value.content) || value.content.encoding !== 'base64') return false
+  const bytes = decodeBase64(value.content.data)
+  if (!bytes || bytes.length !== value.size) return false
+  if (value.kind === 'video') return isString(value.mimeType) && value.mimeType.startsWith('video/')
+  if (value.kind !== 'image' || !isString(value.mimeType)) return false
+  try {
+    const dimensions = readSafeImageDimensionsFromBytes(bytes, value.mimeType)
+    return dimensions.width * dimensions.height <= EXERCISE_IMAGE_MAX_PIXELS
+  } catch {
+    return false
   }
 }
 
@@ -133,9 +150,7 @@ function isExportedExercise(value: unknown) {
       && typeof media.size === 'number' && Number.isSafeInteger(media.size) && media.size >= 0
       && media.size <= (media.kind === 'image' ? EXERCISE_IMAGE_MAX_BYTES : EXERCISE_VIDEO_MAX_BYTES)
       && isTimestamp(media.createdAt)
-      && isRecord(media.content)
-      && media.content.encoding === 'base64'
-      && decodedBase64Size(media.content.data) === media.size)
+      && isSafeEncodedMedia(media))
 }
 
 function isSetTarget(value: unknown) {
@@ -333,6 +348,23 @@ function blobToBase64(blob: Blob) {
   })
 }
 
+function base64ToBlob(data: string, type: string) {
+  const decoded = atob(data)
+  const bytes = new Uint8Array(decoded.length)
+  for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index)
+  return new Blob([bytes], { type })
+}
+
+function importExercise(exercise: ExportedExercise): Exercise {
+  return {
+    ...exercise,
+    media: exercise.media.map(({ content, ...metadata }) => ({
+      ...metadata,
+      blob: base64ToBlob(content.data, metadata.mimeType),
+    })),
+  }
+}
+
 async function exportExercise(exercise: Exercise): Promise<ExportedExercise> {
   return {
     ...exercise,
@@ -378,6 +410,46 @@ export async function createSpottrBackup({
     },
     settings,
   }
+}
+
+async function replaceWithBackup(backup: SpottrBackup, services: BackupServices) {
+  const results = await Promise.allSettled([
+    services.gymService.replaceAll(backup.entities.gyms, backup.entities.selectedGymId),
+    services.exerciseService.replaceAll(backup.entities.exercises.map(importExercise)),
+    services.workoutService.replaceAll(backup.entities.workouts),
+    services.sessionService.replaceAll(backup.entities.activeSession, backup.entities.completedSessions),
+    services.settingsService.update(backup.settings),
+  ])
+  const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
+  if (errors.length > 0) throw new AggregateError(errors, 'Backup restore failed')
+}
+
+let restoreQueue: Promise<void> = Promise.resolve()
+
+export function restoreSpottrBackup(backup: SpottrBackup, services: BackupServices) {
+  const restore = async () => {
+    await Promise.all([
+      services.gymService.waitForIdle?.(),
+      services.exerciseService.waitForIdle?.(),
+      services.workoutService.waitForIdle?.(),
+      services.sessionService.waitForIdle?.(),
+      services.settingsService.waitForIdle?.(),
+    ])
+    const previous = await createSpottrBackup(services)
+    try {
+      await replaceWithBackup(backup, services)
+    } catch (error) {
+      try {
+        await replaceWithBackup(previous, services)
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], 'Backup restore failed and current data could not be fully preserved')
+      }
+      throw error
+    }
+  }
+  const result = restoreQueue.then(restore, restore)
+  restoreQueue = result.then(() => undefined, () => undefined)
+  return result
 }
 
 export function serializeSpottrBackup(backup: SpottrBackup) {

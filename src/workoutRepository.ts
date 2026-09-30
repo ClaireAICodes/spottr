@@ -65,6 +65,14 @@ export function createIndexedDbWorkoutRepository(databaseName = 'spottr-v1-worko
       transaction.objectStore(WORKOUTS_STORE).delete(id)
       await transactionComplete(transaction)
     },
+    async replaceAll(templates) {
+      const database = await openDatabase()
+      const transaction = database.transaction(WORKOUTS_STORE, 'readwrite')
+      const store = transaction.objectStore(WORKOUTS_STORE)
+      store.clear()
+      templates.forEach((template) => store.put(template))
+      await transactionComplete(transaction)
+    },
     async close() {
       if (!databasePromise) return
       const database = await databasePromise

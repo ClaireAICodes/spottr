@@ -108,6 +108,18 @@ export function createIndexedDbGymRepository(databaseName = 'spottr-v1'): GymRep
       return ((await requestResult(request)) as string | undefined) ?? null
     },
 
+    async replaceAll(gyms, selectedId) {
+      const database = await openDatabase()
+      const transaction = database.transaction([GYMS_STORE, SETTINGS_STORE], 'readwrite')
+      const gymsStore = transaction.objectStore(GYMS_STORE)
+      const settingsStore = transaction.objectStore(SETTINGS_STORE)
+      gymsStore.clear()
+      gyms.forEach((gym) => gymsStore.put(gym))
+      if (selectedId) settingsStore.put(selectedId, SELECTED_GYM_KEY)
+      else settingsStore.delete(SELECTED_GYM_KEY)
+      await transactionComplete(transaction)
+    },
+
     async close() {
       if (!databasePromise) return
       const database = await databasePromise

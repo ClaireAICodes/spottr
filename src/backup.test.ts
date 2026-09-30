@@ -1,4 +1,4 @@
-import { createSpottrBackup, downloadSpottrBackup, MAX_BACKUP_FILE_BYTES, parseSpottrBackup, serializeSpottrBackup } from './backup'
+import { createSpottrBackup, downloadSpottrBackup, MAX_BACKUP_FILE_BYTES, parseSpottrBackup, restoreSpottrBackup, serializeSpottrBackup } from './backup'
 import { createExerciseService, createMemoryExerciseRepository, type Exercise } from './exercises'
 import { createGymService, createMemoryGymRepository, type Gym } from './gyms'
 import { createMemorySessionRepository, createSessionService, type CompletedWorkoutSession, type WorkoutSession } from './sessions'
@@ -25,7 +25,10 @@ describe('Spottr backup export', () => {
       createdAt: timestamp,
       updatedAt: timestamp,
     }
-    const mediaBlob = new Blob(['Hi'], { type: 'image/png' })
+    const mediaData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1Pe'
+    const mediaBlob = new Blob([
+      Uint8Array.from(atob(mediaData), (character) => character.charCodeAt(0)),
+    ], { type: 'image/png' })
     const exercise: Exercise = {
       id: 'exercise-1',
       name: 'Back Squat',
@@ -140,9 +143,9 @@ describe('Spottr backup export', () => {
             kind: 'image',
             name: 'setup.png',
             mimeType: 'image/png',
-            size: 2,
+            size: 33,
             createdAt: timestamp,
-            content: { encoding: 'base64', data: 'SGk=' },
+            content: { encoding: 'base64', data: mediaData },
           }],
         }],
         workouts: [workout],
@@ -158,9 +161,52 @@ describe('Spottr backup export', () => {
     expect(JSON.parse(await blobText(file))).toEqual(backup)
     expect(parseSpottrBackup(await blobText(file))).toEqual(backup)
 
+    const restoredGymService = createGymService(createMemoryGymRepository([{
+      ...gym,
+      id: 'obsolete-gym',
+      name: 'Obsolete Gym',
+    }]))
+    const restoredExerciseService = createExerciseService(createMemoryExerciseRepository([{
+      ...exercise,
+      id: 'obsolete-exercise',
+      name: 'Obsolete Exercise',
+      media: [],
+    }]))
+    const restoredWorkoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const restoredSessionService = createSessionService(
+      createMemorySessionRepository(),
+      restoredWorkoutService,
+      restoredExerciseService,
+    )
+    const restoredSettingsService = createSettingsService(createMemorySettingsRepository())
+    const restoredServices = {
+      gymService: restoredGymService,
+      exerciseService: restoredExerciseService,
+      workoutService: restoredWorkoutService,
+      sessionService: restoredSessionService,
+      settingsService: restoredSettingsService,
+      now: () => timestamp,
+    }
+
+    await restoreSpottrBackup(parseSpottrBackup(await blobText(file)), restoredServices)
+
+    expect(await createSpottrBackup(restoredServices)).toEqual(backup)
+
     const wrongMediaSize = structuredClone(backup)
     wrongMediaSize.entities.exercises[0].media[0].size = 3
     expect(() => parseSpottrBackup(JSON.stringify(wrongMediaSize))).toThrow(/not a valid Spottr backup/i)
+
+    const oversizedImageDimensions = structuredClone(backup)
+    oversizedImageDimensions.entities.exercises[0].media[0] = {
+      ...oversizedImageDimensions.entities.exercises[0].media[0],
+      mimeType: 'image/png',
+      size: 33,
+      content: {
+        encoding: 'base64',
+        data: 'iVBORw0KGgoAAAANSUhEUgAAE4gAABOICAIAAADS+hCc',
+      },
+    }
+    expect(() => parseSpottrBackup(JSON.stringify(oversizedImageDimensions))).toThrow(/not a valid Spottr backup/i)
 
     const blankIdentity = structuredClone(backup)
     blankIdentity.entities.gyms[0].id = ' '
@@ -358,5 +404,68 @@ describe('Spottr backup export', () => {
       Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectUrl })
       HTMLAnchorElement.prototype.click = originalLinkClick
     }
+  })
+
+  it('rolls every service back when one replacement fails', async () => {
+    const sourceGym: Gym = {
+      id: 'source-gym',
+      name: 'Source Gym',
+      address: '',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+    const sourceGymService = createGymService(createMemoryGymRepository([sourceGym]))
+    const sourceExerciseService = createExerciseService(createMemoryExerciseRepository())
+    const sourceWorkoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const sourceSessionService = createSessionService(
+      createMemorySessionRepository(),
+      sourceWorkoutService,
+      sourceExerciseService,
+    )
+    const sourceServices = {
+      gymService: sourceGymService,
+      exerciseService: sourceExerciseService,
+      workoutService: sourceWorkoutService,
+      sessionService: sourceSessionService,
+      settingsService: createSettingsService(createMemorySettingsRepository()),
+      now: () => timestamp,
+    }
+    const incoming = await createSpottrBackup(sourceServices)
+
+    const currentGym: Gym = {
+      id: 'current-gym',
+      name: 'Current Gym',
+      address: '',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+    const gymService = createGymService(createMemoryGymRepository([currentGym]))
+    await gymService.select(currentGym.id)
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    const settingsService = createSettingsService(createMemorySettingsRepository())
+    let replacements = 0
+    const failingWorkoutService = {
+      ...workoutService,
+      async replaceAll(templates: WorkoutTemplate[]) {
+        replacements += 1
+        if (replacements === 1) throw new Error('Simulated storage failure')
+        await workoutService.replaceAll(templates)
+      },
+    }
+    const targetServices = {
+      gymService,
+      exerciseService,
+      workoutService: failingWorkoutService,
+      sessionService,
+      settingsService,
+      now: () => timestamp,
+    }
+    const before = await createSpottrBackup(targetServices)
+
+    await expect(restoreSpottrBackup(incoming, targetServices)).rejects.toThrow(/backup restore failed/i)
+
+    expect(await createSpottrBackup(targetServices)).toEqual(before)
   })
 })

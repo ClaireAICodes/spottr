@@ -34,10 +34,13 @@ export interface ExerciseRepository {
   addMedia(exerciseId: string, media: ExerciseMedia, totalLimit: number): Promise<void>
   moveMedia(exerciseId: string, mediaId: string, direction: 'up' | 'down'): Promise<void>
   removeMedia(exerciseId: string, mediaId: string): Promise<void>
+  replaceAll(exercises: Exercise[]): Promise<void>
   close?(): Promise<void>
 }
 
-export type ExerciseService = ReturnType<typeof createExerciseService>
+export type ExerciseService = Omit<ReturnType<typeof createExerciseService>, 'waitForIdle'> & {
+  waitForIdle?: () => Promise<void>
+}
 
 type ExerciseServiceOptions = {
   createId?: () => string
@@ -49,6 +52,13 @@ export function createExerciseService(repository: ExerciseRepository, options: E
   const createId = options.createId ?? (() => crypto.randomUUID())
   const now = options.now ?? (() => new Date().toISOString())
   const prepareImage = options.prepareImage ?? compressExerciseImage
+  let mutationQueue: Promise<void> = Promise.resolve()
+
+  function mutate<T>(operation: () => Promise<T>) {
+    const result = mutationQueue.then(operation, operation)
+    mutationQueue = result.then(() => undefined, () => undefined)
+    return result
+  }
 
   function withMedia(exercise: Exercise): Exercise {
     return { ...exercise, media: exercise.media ?? [] }
@@ -87,43 +97,49 @@ export function createExerciseService(repository: ExerciseRepository, options: E
     },
 
     async create(draft: ExerciseDraft) {
-      const normalized = normalize(draft)
-      const timestamp = now()
-      const exercise: Exercise = {
-        id: createId(),
-        ...normalized,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        media: [],
-      }
-      await repository.save(exercise)
-      return exercise
+      return mutate(async () => {
+        const normalized = normalize(draft)
+        const timestamp = now()
+        const exercise: Exercise = {
+          id: createId(),
+          ...normalized,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          media: [],
+        }
+        await repository.save(exercise)
+        return exercise
+      })
     },
 
     async update(id: string, draft: ExerciseDraft) {
-      const current = await requireExercise(id)
-      const exercise: Exercise = { ...current, ...normalize(draft), updatedAt: now() }
-      await repository.save(exercise)
-      return exercise
+      return mutate(async () => {
+        const current = await requireExercise(id)
+        const exercise: Exercise = { ...current, ...normalize(draft), updatedAt: now() }
+        await repository.save(exercise)
+        return exercise
+      })
     },
 
     async duplicate(id: string, name?: string) {
-      const current = await requireExercise(id)
-      const timestamp = now()
-      const exercise: Exercise = {
-        id: createId(),
-        ...normalize({
-          name: name ?? `${current.name} variation`,
-          muscleGroup: current.muscleGroup,
-          equipment: current.equipment,
-          notes: current.notes,
-        }),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        media: [],
-      }
-      await repository.save(exercise)
-      return exercise
+      return mutate(async () => {
+        const current = await requireExercise(id)
+        const timestamp = now()
+        const exercise: Exercise = {
+          id: createId(),
+          ...normalize({
+            name: name ?? `${current.name} variation`,
+            muscleGroup: current.muscleGroup,
+            equipment: current.equipment,
+            notes: current.notes,
+          }),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          media: [],
+        }
+        await repository.save(exercise)
+        return exercise
+      })
     },
 
     async get(id: string) {
@@ -141,36 +157,50 @@ export function createExerciseService(repository: ExerciseRepository, options: E
     },
 
     async addMedia(exerciseId: string, file: File) {
-      const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : null
-      if (!kind) throw new Error('Choose an image or video file')
-      if (kind === 'video' && file.size > EXERCISE_VIDEO_MAX_BYTES) {
-        throw new Error('Video exceeds the 15 MB per-video limit')
-      }
-      const blob = kind === 'image' ? await prepareImage(file) : file
-      if (kind === 'image' && blob.size > EXERCISE_IMAGE_MAX_BYTES) {
-        throw new Error('Image could not be compressed below the 2 MB image limit')
-      }
-      const media: ExerciseMedia = {
-        id: createId(),
-        kind,
-        name: file.name,
-        mimeType: blob.type || file.type,
-        size: blob.size,
-        blob,
-        createdAt: now(),
-      }
-      await repository.addMedia(exerciseId, media, EXERCISE_MEDIA_TOTAL_BYTES)
-      return media
+      return mutate(async () => {
+        const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : null
+        if (!kind) throw new Error('Choose an image or video file')
+        if (kind === 'video' && file.size > EXERCISE_VIDEO_MAX_BYTES) {
+          throw new Error('Video exceeds the 15 MB per-video limit')
+        }
+        const blob = kind === 'image' ? await prepareImage(file) : file
+        if (kind === 'image' && blob.size > EXERCISE_IMAGE_MAX_BYTES) {
+          throw new Error('Image could not be compressed below the 2 MB image limit')
+        }
+        const media: ExerciseMedia = {
+          id: createId(),
+          kind,
+          name: file.name,
+          mimeType: blob.type || file.type,
+          size: blob.size,
+          blob,
+          createdAt: now(),
+        }
+        await repository.addMedia(exerciseId, media, EXERCISE_MEDIA_TOTAL_BYTES)
+        return media
+      })
     },
 
     async moveMedia(exerciseId: string, mediaId: string, direction: 'up' | 'down') {
-      await repository.moveMedia(exerciseId, mediaId, direction)
-      return requireExercise(exerciseId)
+      return mutate(async () => {
+        await repository.moveMedia(exerciseId, mediaId, direction)
+        return requireExercise(exerciseId)
+      })
     },
 
     async removeMedia(exerciseId: string, mediaId: string) {
-      await repository.removeMedia(exerciseId, mediaId)
-      return requireExercise(exerciseId)
+      return mutate(async () => {
+        await repository.removeMedia(exerciseId, mediaId)
+        return requireExercise(exerciseId)
+      })
+    },
+
+    async replaceAll(exercises: Exercise[]) {
+      await mutate(() => repository.replaceAll(exercises.map(withMedia)))
+    },
+
+    async waitForIdle() {
+      await mutationQueue
     },
   }
 }
@@ -213,7 +243,11 @@ async function readSafeImageDimensions(file: File) {
       reader.readAsArrayBuffer(file)
     })
   const bytes = new Uint8Array(buffer)
-  if (file.type === 'image/png') {
+  return readSafeImageDimensionsFromBytes(bytes, file.type)
+}
+
+export function readSafeImageDimensionsFromBytes(bytes: Uint8Array, mimeType: string) {
+  if (mimeType === 'image/png') {
     const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
     const validHeader = bytes.length >= 33
       && signature.every((value, index) => bytes[index] === value)
@@ -229,6 +263,7 @@ async function readSafeImageDimensions(file: File) {
     return dimensions
   }
 
+  if (mimeType !== 'image/jpeg') throw new Error('Choose a JPEG or PNG image')
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error('The JPEG image is invalid')
   let offset = 2
   while (offset < bytes.length) {
@@ -313,6 +348,10 @@ export function createMemoryExerciseRepository(initialExercises: Exercise[] = []
       const remaining = exercise.media.filter(({ id }) => id !== mediaId)
       if (remaining.length === exercise.media.length) throw new Error('Exercise media not found')
       exercise.media = remaining
+    },
+    async replaceAll(nextExercises) {
+      exercises.clear()
+      nextExercises.forEach((exercise) => exercises.set(exercise.id, cloneExercise(exercise)))
     },
   }
 }

@@ -79,6 +79,42 @@ describe('shared exercise library', () => {
     await expect(service.search('barbell')).resolves.toEqual([edited])
   })
 
+  it('does not let an earlier exercise save repopulate a restored library', async () => {
+    const repository = createMemoryExerciseRepository()
+    const originalSave = repository.save.bind(repository)
+    let releaseSave!: () => void
+    let markSaveStarted!: () => void
+    const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve })
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve })
+    repository.save = async (exercise) => {
+      markSaveStarted()
+      await saveGate
+      await originalSave(exercise)
+    }
+    const service = createExerciseService(repository, {
+      createId: () => 'earlier-exercise',
+      now: () => '2026-09-29T12:00:00.000Z',
+    })
+    const restoredExercise = {
+      id: 'restored-exercise',
+      name: 'Restored Exercise',
+      muscleGroup: 'Back',
+      equipment: 'Cable',
+      notes: '',
+      createdAt: '2026-09-29T11:00:00.000Z',
+      updatedAt: '2026-09-29T11:00:00.000Z',
+      media: [],
+    }
+
+    const earlierSave = service.create({ name: 'Earlier Exercise', muscleGroup: '', equipment: '', notes: '' })
+    await saveStarted
+    const replacement = service.replaceAll([restoredExercise])
+    releaseSave()
+    await Promise.all([earlierSave, replacement])
+
+    await expect(service.search()).resolves.toEqual([restoredExercise])
+  })
+
   it('exerciseLibrary_reload_restoresPersistedExercise', async () => {
     const databaseName = `spottr-exercises-${crypto.randomUUID()}`
     const firstRepository = createIndexedDbExerciseRepository(databaseName)

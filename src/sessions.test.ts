@@ -30,6 +30,38 @@ async function createTrainingContext() {
 }
 
 describe('active workout session service', () => {
+  it('does not let an earlier session write survive a restore replacement', async () => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const service = createSessionService(repository, context.workoutService, context.exerciseService, {
+      now: () => '2026-09-29T12:00:00.000Z',
+    })
+    const started = await service.start(context.template.id, context.gym.name)
+    const originalUpdateActive = repository.updateActive.bind(repository)
+    let releaseUpdate!: () => void
+    let markUpdateStarted!: () => void
+    const updateStarted = new Promise<void>((resolve) => { markUpdateStarted = resolve })
+    const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve })
+    repository.updateActive = async (update) => {
+      markUpdateStarted()
+      await updateGate
+      return originalUpdateActive(update)
+    }
+
+    const earlierLog = service.logSet(
+      started.exercises[0].id,
+      started.exercises[0].sets[0].id,
+      { weight: 20, reps: 10 },
+    )
+    await updateStarted
+    const replacement = service.replaceAll(null, [])
+    releaseUpdate()
+    await Promise.all([earlierLog, replacement])
+
+    await expect(service.getActive()).resolves.toBeNull()
+    await expect(service.listHistory()).resolves.toEqual([])
+  })
+
   it('restTimer_logSet_reload_restoresTheRunningTimer', async () => {
     const context = await createTrainingContext()
     const repository = createMemorySessionRepository()

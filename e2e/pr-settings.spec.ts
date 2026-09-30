@@ -83,6 +83,15 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
     settings: { weightUnit: 'lb', restSeconds: 120 },
   })
   await expect(page.getByRole('status').filter({ hasText: 'Backup downloaded' })).toBeVisible()
+
+  await page.getByRole('tab', { name: 'Home' }).click()
+  await page.getByRole('button', { name: 'Manage gyms' }).click()
+  await page.getByRole('button', { name: 'Add gym', exact: true }).click()
+  await page.getByLabel('Gym name').fill('Temporary Gym')
+  await page.getByRole('button', { name: 'Save gym' }).click()
+  await page.getByRole('button', { name: 'Back to home' }).click()
+  await page.getByRole('tab', { name: 'Settings' }).click()
+
   const backupInput = page.getByLabel('Choose backup file')
   await backupInput.setInputFiles({
     name: 'spottr-backup.json',
@@ -90,6 +99,15 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
     buffer: Buffer.from(JSON.stringify(backup)),
   })
   await expect(page.getByRole('status').filter({ hasText: 'compatible and ready' })).toBeVisible()
+  await page.getByRole('button', { name: 'Restore backup' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Backup restored' })).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: 'Manage gyms' }).click()
+  await expect(page.getByRole('article', { name: 'North Gym' })).toBeVisible()
+  await expect(page.getByRole('article', { name: 'Temporary Gym' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Back to home' }).click()
+  await page.getByRole('tab', { name: 'Settings' }).click()
+
   await backupInput.setInputFiles({ name: 'malformed.json', mimeType: 'application/json', buffer: Buffer.from('{}') })
   await expect(page.getByRole('alert')).toContainText('not a valid Spottr backup')
   await backupInput.setInputFiles({

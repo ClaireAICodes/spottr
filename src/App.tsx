@@ -79,6 +79,7 @@ export function App({
   const [templateReload, setTemplateReload] = useState(0)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsStatus, setSettingsStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [isBackupRestoreInProgress, setIsBackupRestoreInProgress] = useState(false)
   const selectedGymRequest = useRef(0)
   const activeSessionRequest = useRef(0)
   const [isCompactNav, setIsCompactNav] = useState(
@@ -212,6 +213,21 @@ export function App({
     tabRefs.current[index]?.focus()
   }
 
+  function handleBackupRestored(restoredSettings: AppSettings) {
+    setSettings(restoredSettings)
+    setCompletedSession(null)
+    setIsSessionOpen(false)
+    setSelectedGym(null)
+    setActiveSession(null)
+    setSessionTemplates([])
+    setSessionLoadError('')
+    setTemplateLoadError('')
+    setTemplateStatus('idle')
+    void loadSelectedGym()
+    void loadActiveSession()
+    setTemplateReload((value) => value + 1)
+  }
+
   function handleTabKey(event: React.KeyboardEvent, index: number) {
     let next: number | undefined
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % tabs.length
@@ -299,6 +315,8 @@ export function App({
             workoutService={workoutService}
             sessionService={activeSessionService}
             onSettingsChange={setSettings}
+            onBackupRestored={handleBackupRestored}
+            onBackupRestoreStateChange={setIsBackupRestoreInProgress}
           />
         )}
       </main>
@@ -315,6 +333,7 @@ export function App({
               aria-selected={activeTab === index}
               aria-controls="main-view"
               tabIndex={activeTab === index ? 0 : -1}
+              disabled={isBackupRestoreInProgress}
               onClick={() => selectTab(index)}
               onKeyDown={(event) => handleTabKey(event, index)}
             >

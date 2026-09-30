@@ -38,10 +38,13 @@ export interface WorkoutRepository {
   get(id: string): Promise<WorkoutTemplate | null>
   save(template: WorkoutTemplate): Promise<void>
   remove(id: string): Promise<void>
+  replaceAll(templates: WorkoutTemplate[]): Promise<void>
   close?(): Promise<void>
 }
 
-export type WorkoutService = ReturnType<typeof createWorkoutService>
+export type WorkoutService = Omit<ReturnType<typeof createWorkoutService>, 'waitForIdle'> & {
+  waitForIdle?: () => Promise<void>
+}
 
 type WorkoutServiceOptions = {
   createId?: () => string
@@ -62,6 +65,14 @@ function cloneTemplate(template: WorkoutTemplate): WorkoutTemplate {
 export function createWorkoutService(repository: WorkoutRepository, options: WorkoutServiceOptions = {}) {
   const createId = options.createId ?? (() => crypto.randomUUID())
   const now = options.now ?? (() => new Date().toISOString())
+  let mutationQueue: Promise<void> = Promise.resolve()
+
+  function mutate<T>(operation: () => Promise<T>) {
+    const run = () => withWorkoutIntegrityLock(operation)
+    const result = mutationQueue.then(run, run)
+    mutationQueue = result.then(() => undefined, () => undefined)
+    return result
+  }
 
   async function ensureGymExists(gymId: string) {
     if (options.gymExists && !(await options.gymExists(gymId))) throw new Error('Gym not found')
@@ -119,6 +130,18 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     return template
   }
 
+  async function updateTemplate(id: string, draft: WorkoutTemplateDraft) {
+    const current = await requireTemplate(id)
+    await ensureGymExists(draft.gymId.trim())
+    const template: WorkoutTemplate = {
+      ...current,
+      ...normalize(draft, current),
+      updatedAt: now(),
+    }
+    await repository.save(template)
+    return cloneTemplate(template)
+  }
+
   return {
     async list(gymId?: string) {
       const templates = await repository.list()
@@ -134,7 +157,7 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     },
 
     async create(draft: WorkoutTemplateDraft) {
-      return withWorkoutIntegrityLock(async () => {
+      return mutate(async () => {
         await ensureGymExists(draft.gymId.trim())
         const timestamp = now()
         const template: WorkoutTemplate = {
@@ -149,21 +172,11 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     },
 
     async update(id: string, draft: WorkoutTemplateDraft) {
-      return withWorkoutIntegrityLock(async () => {
-        const current = await requireTemplate(id)
-        await ensureGymExists(draft.gymId.trim())
-        const template: WorkoutTemplate = {
-          ...current,
-          ...normalize(draft, current),
-          updatedAt: now(),
-        }
-        await repository.save(template)
-        return cloneTemplate(template)
-      })
+      return mutate(() => updateTemplate(id, draft))
     },
 
     async updateSetTarget(id: string, templateExerciseId: string, setId: string, target: { weight: number; reps: number }) {
-      return withWorkoutIntegrityLock(async () => {
+      return mutate(async () => {
         const current = await requireTemplate(id)
         let found = false
         const exercises = current.exercises.map((exercise) => exercise.id === templateExerciseId
@@ -188,7 +201,7 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     },
 
     async duplicate(id: string, gymId: string) {
-      return withWorkoutIntegrityLock(async () => {
+      return mutate(async () => {
         const current = await requireTemplate(id)
         await ensureGymExists(gymId.trim())
         const timestamp = now()
@@ -208,26 +221,38 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     },
 
     async substituteExercise(id: string, templateExerciseId: string, exerciseId: string) {
-      const current = await requireTemplate(id)
-      const exercises = current.exercises.map((exercise) => exercise.id === templateExerciseId
-        ? { ...exercise, exerciseId }
-        : exercise)
-      if (exercises.every((exercise, index) => exercise === current.exercises[index])) {
-        throw new Error('Workout exercise not found')
-      }
-      return this.update(id, { name: current.name, gymId: current.gymId, exercises })
+      return mutate(async () => {
+        const current = await requireTemplate(id)
+        const exercises = current.exercises.map((exercise) => exercise.id === templateExerciseId
+          ? { ...exercise, exerciseId }
+          : exercise)
+        if (exercises.every((exercise, index) => exercise === current.exercises[index])) {
+          throw new Error('Workout exercise not found')
+        }
+        return updateTemplate(id, { name: current.name, gymId: current.gymId, exercises })
+      })
     },
 
     async removeExercise(id: string, templateExerciseId: string) {
-      const current = await requireTemplate(id)
-      const exercises = current.exercises.filter((exercise) => exercise.id !== templateExerciseId)
-      if (exercises.length === current.exercises.length) throw new Error('Workout exercise not found')
-      if (exercises.length === 0) throw new Error('A workout needs at least one exercise')
-      return this.update(id, { name: current.name, gymId: current.gymId, exercises })
+      return mutate(async () => {
+        const current = await requireTemplate(id)
+        const exercises = current.exercises.filter((exercise) => exercise.id !== templateExerciseId)
+        if (exercises.length === current.exercises.length) throw new Error('Workout exercise not found')
+        if (exercises.length === 0) throw new Error('A workout needs at least one exercise')
+        return updateTemplate(id, { name: current.name, gymId: current.gymId, exercises })
+      })
     },
 
     async remove(id: string) {
-      await withWorkoutIntegrityLock(() => repository.remove(id))
+      await mutate(() => repository.remove(id))
+    },
+
+    async replaceAll(templates: WorkoutTemplate[]) {
+      await mutate(() => repository.replaceAll(templates.map(cloneTemplate)))
+    },
+
+    async waitForIdle() {
+      await mutationQueue
     },
   }
 }
@@ -247,6 +272,10 @@ export function createMemoryWorkoutRepository(initialTemplates: WorkoutTemplate[
     },
     async remove(id) {
       templates.delete(id)
+    },
+    async replaceAll(nextTemplates) {
+      templates.clear()
+      nextTemplates.forEach((template) => templates.set(template.id, cloneTemplate(template)))
     },
   }
 }

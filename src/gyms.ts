@@ -23,10 +23,13 @@ export interface GymRepository {
   remove(id: string): Promise<void>
   select(id: string | null): Promise<void>
   getSelectedId(): Promise<string | null>
+  replaceAll(gyms: Gym[], selectedId: string | null): Promise<void>
   close?(): Promise<void>
 }
 
-export type GymService = ReturnType<typeof createGymService>
+export type GymService = Omit<ReturnType<typeof createGymService>, 'waitForIdle'> & {
+  waitForIdle?: () => Promise<void>
+}
 
 type GymServiceOptions = {
   createId?: () => string
@@ -36,6 +39,13 @@ type GymServiceOptions = {
 export function createGymService(repository: GymRepository, options: GymServiceOptions = {}) {
   const createId = options.createId ?? (() => crypto.randomUUID())
   const now = options.now ?? (() => new Date().toISOString())
+  let mutationQueue: Promise<void> = Promise.resolve()
+
+  function mutate<T>(operation: () => Promise<T>) {
+    const result = mutationQueue.then(operation, operation)
+    mutationQueue = result.then(() => undefined, () => undefined)
+    return result
+  }
 
   function normalize(draft: GymDraft): GymDraft {
     const name = draft.name.trim()
@@ -53,41 +63,57 @@ export function createGymService(repository: GymRepository, options: GymServiceO
     },
 
     async create(draft: GymDraft) {
-      const normalized = normalize(draft)
-      const timestamp = now()
-      const gym: Gym = {
-        id: createId(),
-        ...normalized,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }
-      await repository.saveAndSelectIfNone(gym)
-      return gym
+      return mutate(async () => {
+        const normalized = normalize(draft)
+        const timestamp = now()
+        const gym: Gym = {
+          id: createId(),
+          ...normalized,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }
+        await repository.saveAndSelectIfNone(gym)
+        return gym
+      })
     },
 
     async update(id: string, draft: GymDraft) {
-      const current = await repository.get(id)
-      if (!current) throw new Error('Gym not found')
-      const gym: Gym = { ...current, ...normalize(draft), updatedAt: now() }
-      await repository.save(gym)
-      return gym
+      return mutate(async () => {
+        const current = await repository.get(id)
+        if (!current) throw new Error('Gym not found')
+        const gym: Gym = { ...current, ...normalize(draft), updatedAt: now() }
+        await repository.save(gym)
+        return gym
+      })
     },
 
     async remove(id: string) {
-      await repository.remove(id)
+      await mutate(() => repository.remove(id))
     },
 
     async select(id: string) {
-      if (!(await repository.get(id))) throw new Error('Gym not found')
-      await repository.select(id)
+      await mutate(async () => {
+        if (!(await repository.get(id))) throw new Error('Gym not found')
+        await repository.select(id)
+      })
     },
 
     async getSelected() {
-      const id = await repository.getSelectedId()
-      if (!id) return null
-      const gym = await repository.get(id)
-      if (!gym) await repository.select(null)
-      return gym
+      return mutate(async () => {
+        const id = await repository.getSelectedId()
+        if (!id) return null
+        const gym = await repository.get(id)
+        if (!gym) await repository.select(null)
+        return gym
+      })
+    },
+
+    async replaceAll(gyms: Gym[], selectedId: string | null) {
+      await mutate(() => repository.replaceAll(gyms, selectedId))
+    },
+
+    async waitForIdle() {
+      await mutationQueue
     },
   }
 }
@@ -120,6 +146,11 @@ export function createMemoryGymRepository(initialGyms: Gym[] = []): GymRepositor
     },
     async getSelectedId() {
       return selectedId
+    },
+    async replaceAll(nextGyms, nextSelectedId) {
+      gyms.clear()
+      nextGyms.forEach((gym) => gyms.set(gym.id, structuredClone(gym)))
+      selectedId = nextSelectedId
     },
   }
 }

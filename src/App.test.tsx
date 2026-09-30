@@ -874,6 +874,110 @@ describe('active workout session journey', () => {
     expect(await gymService.list()).toEqual([currentGym])
   })
 
+  it('restores a compatible backup by replacing all current saved data', async () => {
+    const user = userEvent.setup()
+    const sourceGymService = createGymService(createMemoryGymRepository())
+    const sourceGym = await sourceGymService.create({ name: 'Restored Gym', address: '2 Archive Road' })
+    const sourceExerciseService = createExerciseService(createMemoryExerciseRepository())
+    const sourceExercise = await sourceExerciseService.create({ name: 'Restored Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: 'From backup' })
+    const sourceWorkoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const sourceWorkout = await sourceWorkoutService.create({
+      name: 'Restored Workout',
+      gymId: sourceGym.id,
+      exercises: [{ exerciseId: sourceExercise.id, sets: [{ kind: 'working', weight: 80, reps: 5 }] }],
+    })
+    const sourceSessionService = createSessionService(createMemorySessionRepository(), sourceWorkoutService, sourceExerciseService)
+    const sourceSettingsService = createSettingsService(createMemorySettingsRepository({
+      weightUnit: 'lb',
+      progressiveOverloadCues: false,
+      prCelebrations: false,
+      restTimerEnabled: true,
+      restSeconds: 120,
+    }))
+    const backup = await createSpottrBackup({
+      gymService: sourceGymService,
+      exerciseService: sourceExerciseService,
+      workoutService: sourceWorkoutService,
+      sessionService: sourceSessionService,
+      settingsService: sourceSettingsService,
+      now: () => '2026-09-29T12:00:00.000Z',
+    })
+
+    const gymService = createGymService(createMemoryGymRepository())
+    const currentGym = await gymService.create({ name: 'Current Gym', address: '' })
+    const persistedExerciseService = createExerciseService(createMemoryExerciseRepository())
+    let releaseRestore!: () => void
+    let markRestoreStarted!: () => void
+    const restoreStarted = new Promise<void>((resolve) => { markRestoreStarted = resolve })
+    const restoreGate = new Promise<void>((resolve) => { releaseRestore = resolve })
+    const exerciseService = {
+      ...persistedExerciseService,
+      async replaceAll(exercises: Parameters<typeof persistedExerciseService.replaceAll>[0]) {
+        markRestoreStarted()
+        await restoreGate
+        await persistedExerciseService.replaceAll(exercises)
+      },
+    }
+    const currentExercise = await exerciseService.create({ name: 'Current Exercise', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const currentWorkout = await workoutService.create({
+      name: 'Current Workout',
+      gymId: currentGym.id,
+      exercises: [{ exerciseId: currentExercise.id, sets: [{ kind: 'working', weight: 20, reps: 10 }] }],
+    })
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    await sessionService.start(currentWorkout.id, currentGym.name)
+    const persistedSettingsService = createSettingsService(createMemorySettingsRepository())
+    let releaseSave!: () => void
+    let markSaveStarted!: () => void
+    const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve })
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve })
+    let settingsUpdates = 0
+    const settingsService = {
+      ...persistedSettingsService,
+      async update(settings: Parameters<typeof persistedSettingsService.update>[0]) {
+        settingsUpdates += 1
+        if (settingsUpdates === 1) {
+          markSaveStarted()
+          await saveGate
+        }
+        return persistedSettingsService.update(settings)
+      },
+    }
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} settingsService={settingsService} />)
+    await user.click(screen.getByRole('tab', { name: /settings/i }))
+    await user.click(await screen.findByRole('button', { name: /save settings/i }))
+    await saveStarted
+
+    await user.upload(
+      await screen.findByLabelText(/choose backup file/i),
+      new File([JSON.stringify(backup)], 'spottr-backup.json', { type: 'application/json' }),
+    )
+    const restoreButton = await screen.findByRole('button', { name: /restore backup/i })
+    expect(restoreButton).toBeDisabled()
+    releaseSave()
+    await waitFor(() => expect(restoreButton).toBeEnabled())
+    await user.click(restoreButton)
+
+    await restoreStarted
+    expect(screen.getByRole('tab', { name: /home/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /save settings/i })).toBeDisabled()
+    releaseRestore()
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/backup restored/i))
+    expect(screen.getByRole('tab', { name: /home/i })).toBeEnabled()
+    expect(await gymService.list()).toEqual(backup.entities.gyms)
+    expect(await gymService.getSelected()).toEqual(sourceGym)
+    expect(await exerciseService.search()).toEqual([sourceExercise])
+    expect(await workoutService.list()).toEqual([sourceWorkout])
+    expect(await sessionService.getActive()).toBeNull()
+    expect(await sessionService.listHistory()).toEqual([])
+    expect(await settingsService.get()).toEqual(backup.settings)
+    await user.click(screen.getByRole('tab', { name: /home/i }))
+    expect(await screen.findByText(/work out at/i)).toHaveTextContent('Restored Gym')
+    expect(screen.getByRole('button', { name: /nothing to resume/i })).toBeDisabled()
+  })
+
   it('finishes a partial workout, shows its summary, and restores set-level history after reload', async () => {
     const user = userEvent.setup()
     const gymService = createGymService(createMemoryGymRepository())

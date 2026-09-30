@@ -139,6 +139,14 @@ export function createIndexedDbExerciseRepository(databaseName = 'spottr-v1-exer
         return remaining
       })
     },
+    async replaceAll(exercises) {
+      const database = await openDatabase()
+      const transaction = database.transaction(EXERCISES_STORE, 'readwrite')
+      const store = transaction.objectStore(EXERCISES_STORE)
+      store.clear()
+      exercises.forEach((exercise) => store.put(exercise))
+      await transactionComplete(transaction)
+    },
     async close() {
       if (!databasePromise) return
       const database = await databasePromise

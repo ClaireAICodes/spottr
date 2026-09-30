@@ -39,6 +39,38 @@ describe('gym profiles', () => {
     await expect(service.list()).resolves.toEqual([])
   })
 
+  it('does not let an earlier selected-gym lookup clear a restored selection', async () => {
+    const oldGym = {
+      id: 'old-gym',
+      name: 'Old Gym',
+      address: '',
+      createdAt: '2026-09-22T01:00:00.000Z',
+      updatedAt: '2026-09-22T01:00:00.000Z',
+    }
+    const restoredGym = { ...oldGym, id: 'restored-gym', name: 'Restored Gym' }
+    const repository = createMemoryGymRepository([oldGym])
+    await repository.select(oldGym.id)
+    const originalGet = repository.get.bind(repository)
+    let releaseLookup!: () => void
+    let markLookupStarted!: () => void
+    const lookupStarted = new Promise<void>((resolve) => { markLookupStarted = resolve })
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve })
+    repository.get = async (id) => {
+      markLookupStarted()
+      await lookupGate
+      return originalGet(id)
+    }
+    const service = createGymService(repository)
+
+    const staleLookup = service.getSelected()
+    await lookupStarted
+    const replacement = service.replaceAll([restoredGym], restoredGym.id)
+    releaseLookup()
+    await Promise.all([staleLookup, replacement])
+
+    expect(await service.getSelected()).toEqual(restoredGym)
+  })
+
   it('migrates a version-one gym database without losing its profile', async () => {
     const databaseName = `spottr-migration-${crypto.randomUUID()}`
     const legacyOpen = indexedDB.open(databaseName, 1)
