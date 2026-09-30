@@ -375,7 +375,106 @@ describe('Spottr backup export', () => {
     expect(() => serializeSpottrBackup(oversizedExport)).toThrow(/backup is too large/i)
   })
 
-  it('keeps the object URL alive until an attached download has started', () => {
+  it('snapshots a completed settings save before rolling back a later entity replacement failure', async () => {
+    const incoming = {
+      format: 'spottr-backup' as const,
+      version: 1 as const,
+      exportedAt: timestamp,
+      entities: {
+        gyms: [],
+        selectedGymId: null,
+        exercises: [],
+        workouts: [],
+        activeSession: null,
+        completedSessions: [],
+      },
+      settings: { ...DEFAULT_SETTINGS, weightUnit: 'lb' as const, restSeconds: 120 },
+    }
+    const savedSettings = { ...DEFAULT_SETTINGS, restSeconds: 75 }
+    const gymService = createGymService(createMemoryGymRepository())
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const persistedWorkoutService = createWorkoutService(createMemoryWorkoutRepository())
+    let releaseFailure!: () => void
+    let markReplacementStarted!: () => void
+    const replacementStarted = new Promise<void>((resolve) => { markReplacementStarted = resolve })
+    const failureGate = new Promise<void>((resolve) => { releaseFailure = resolve })
+    let replacements = 0
+    const workoutService = {
+      ...persistedWorkoutService,
+      async replaceAll(templates: Parameters<typeof persistedWorkoutService.replaceAll>[0]) {
+        replacements += 1
+        if (replacements === 1) {
+          markReplacementStarted()
+          await failureGate
+          throw new Error('Simulated storage failure')
+        }
+        await persistedWorkoutService.replaceAll(templates)
+      },
+    }
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    const settingsRepository = createMemorySettingsRepository()
+    const save = settingsRepository.save.bind(settingsRepository)
+    const get = settingsRepository.get.bind(settingsRepository)
+    let releaseSave!: () => void
+    let markSaveStarted!: () => void
+    const saveStarted = new Promise<void>((resolve) => { markSaveStarted = resolve })
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve })
+    settingsRepository.save = async (settings) => {
+      markSaveStarted()
+      await saveGate
+      await save(settings)
+    }
+    let settingsReadCount = 0
+    let restoreIdleHasDrained = false
+    let snapshotReadAfterIdleDrain = false
+    let snapshotSettings: Awaited<ReturnType<typeof get>> | undefined
+    let markSnapshotRead!: () => void
+    const snapshotRead = new Promise<void>((resolve) => { markSnapshotRead = resolve })
+    settingsRepository.get = async () => {
+      settingsReadCount += 1
+      snapshotReadAfterIdleDrain = restoreIdleHasDrained
+      const settings = await get()
+      snapshotSettings = settings
+      markSnapshotRead()
+      return settings
+    }
+    const persistedSettingsService = createSettingsService(settingsRepository)
+    let markRestoreWaitForIdle!: () => void
+    let markRestoreIdleDrained!: () => void
+    const restoreWaitForIdle = new Promise<void>((resolve) => { markRestoreWaitForIdle = resolve })
+    const restoreIdleDrained = new Promise<void>((resolve) => { markRestoreIdleDrained = resolve })
+    const settingsService = {
+      ...persistedSettingsService,
+      async waitForIdle() {
+        markRestoreWaitForIdle()
+        await persistedSettingsService.waitForIdle()
+        restoreIdleHasDrained = true
+        markRestoreIdleDrained()
+      },
+    }
+    const targetServices = { gymService, exerciseService, workoutService, sessionService, settingsService, now: () => timestamp }
+
+    const pendingSave = settingsService.update(savedSettings)
+    await saveStarted
+    const restore = restoreSpottrBackup(incoming, targetServices)
+    await restoreWaitForIdle
+    expect(settingsReadCount).toBe(0)
+    releaseSave()
+    await pendingSave
+    await restoreIdleDrained
+    await snapshotRead
+    expect(settingsReadCount).toBe(1)
+    expect(snapshotReadAfterIdleDrain).toBe(true)
+    expect(snapshotSettings).toEqual(savedSettings)
+    await replacementStarted
+    releaseFailure()
+
+    await expect(restore).rejects.toThrow(/backup restore failed/i)
+    expect(replacements).toBe(2)
+    expect(await createSpottrBackup(targetServices)).toEqual({ ...incoming, settings: savedSettings })
+  })
+
+  it('keeps the object URL alive until an attached download has started', async () => {
     vi.useFakeTimers()
     const originalCreateObjectUrl = URL.createObjectURL
     const originalRevokeObjectUrl = URL.revokeObjectURL

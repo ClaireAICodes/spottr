@@ -978,6 +978,68 @@ describe('active workout session journey', () => {
     expect(screen.getByRole('button', { name: /nothing to resume/i })).toBeDisabled()
   })
 
+  it('does not let a delayed pre-restore selected-gym lookup overwrite the restored gym', async () => {
+    const user = userEvent.setup()
+    const sourceGymService = createGymService(createMemoryGymRepository())
+    const restoredGym = await sourceGymService.create({ name: 'Restored Gym', address: '2 Archive Road' })
+    const sourceExerciseService = createExerciseService(createMemoryExerciseRepository())
+    const sourceWorkoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const sourceSessionService = createSessionService(createMemorySessionRepository(), sourceWorkoutService, sourceExerciseService)
+    const sourceSettingsService = createSettingsService(createMemorySettingsRepository())
+    const backup = await createSpottrBackup({
+      gymService: sourceGymService,
+      exerciseService: sourceExerciseService,
+      workoutService: sourceWorkoutService,
+      sessionService: sourceSessionService,
+      settingsService: sourceSettingsService,
+    })
+
+    const persistedGymService = createGymService(createMemoryGymRepository())
+    await persistedGymService.create({ name: 'Current Gym', address: '' })
+    let releaseLookup!: () => void
+    let markLookupStarted!: () => void
+    let markLookupFinished!: () => void
+    const lookupStarted = new Promise<void>((resolve) => { markLookupStarted = resolve })
+    const lookupFinished = new Promise<void>((resolve) => { markLookupFinished = resolve })
+    const lookupGate = new Promise<void>((resolve) => { releaseLookup = resolve })
+    let firstLookup = true
+    const gymService = {
+      ...persistedGymService,
+      async getSelected() {
+        const selected = await persistedGymService.getSelected()
+        if (firstLookup) {
+          firstLookup = false
+          markLookupStarted()
+          await lookupGate
+          markLookupFinished()
+        }
+        return selected
+      },
+    }
+    const exerciseService = createExerciseService(createMemoryExerciseRepository())
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    const settingsService = createSettingsService(createMemorySettingsRepository())
+    render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} settingsService={settingsService} />)
+    await lookupStarted
+
+    await user.click(screen.getByRole('tab', { name: /settings/i }))
+    await user.upload(
+      await screen.findByLabelText(/choose backup file/i),
+      new File([JSON.stringify(backup)], 'spottr-backup.json', { type: 'application/json' }),
+    )
+    await user.click(await screen.findByRole('button', { name: /restore backup/i }))
+    await screen.findByText(/backup restored\. your previous spottr data was replaced/i)
+    await user.click(screen.getByRole('tab', { name: /home/i }))
+    expect(await screen.findByText(/work out at/i)).toHaveTextContent(restoredGym.name)
+
+    await act(async () => {
+      releaseLookup()
+      await lookupFinished
+    })
+    expect(screen.getByText(/work out at/i)).toHaveTextContent(restoredGym.name)
+  })
+
   it('finishes a partial workout, shows its summary, and restores set-level history after reload', async () => {
     const user = userEvent.setup()
     const gymService = createGymService(createMemoryGymRepository())
