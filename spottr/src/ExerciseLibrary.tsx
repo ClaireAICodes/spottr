@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Dumbbell, ImagePlus, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import type { ChangeEvent, FormEvent } from 'react'
 import type { Exercise, ExerciseMedia, ExerciseService } from './exercises'
+import { EXERCISE_MEDIA_MAX_COUNT } from './exercises'
 import { ActionButton, Panel } from './primitives'
 
 type EditorState = {
@@ -226,6 +227,12 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
                   <strong>Form media</strong>
                   <span>Images compressed · videos up to 15 MB · 25 MB total</span>
                 </div>
+                {exercise.media.length > EXERCISE_MEDIA_MAX_COUNT && (
+                  <p role="status" className="form-message error-copy">{exercise.media.length} saved media items exceed the five-item limit. All are kept for reference, export and reordering. Remove extras explicitly to reach five; remove another before adding new media.</p>
+                )}
+                {exercise.media.length === EXERCISE_MEDIA_MAX_COUNT && (
+                  <p className="form-message">Five media items saved. Remove one before adding another.</p>
+                )}
                 {exercise.media.length > 0 && (
                   <ol className="media-list" aria-label={`Media for ${context}`}>
                     {exercise.media.map((media, index) => (
@@ -243,7 +250,7 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
                 )}
                 <label className={`media-picker${mediaBusyId === exercise.id ? ' busy' : ''}`}>
                   <ImagePlus size={18} aria-hidden="true" /> {mediaBusyId === exercise.id ? 'Saving media…' : 'Add image or video'}
-                  <input ref={(node) => { if (node) mediaPickerRefs.current.set(exercise.id, node); else mediaPickerRefs.current.delete(exercise.id) }} aria-label={`Add image or video — ${context}`} type="file" accept="image/jpeg,image/png,video/*" multiple disabled={Boolean(mediaBusyId)} onClick={(event) => {
+                  <input ref={(node) => { if (node) mediaPickerRefs.current.set(exercise.id, node); else mediaPickerRefs.current.delete(exercise.id) }} aria-label={`Add image or video — ${context}`} type="file" accept="image/jpeg,image/png,video/*" multiple disabled={Boolean(mediaBusyId) || exercise.media.length >= EXERCISE_MEDIA_MAX_COUNT} onClick={(event) => {
                     // The OS chooser may blur its invoker before dispatching change.
                     uploadFocus.current = document.activeElement === event.currentTarget
                       ? { exerciseId: exercise.id, picker: event.currentTarget }

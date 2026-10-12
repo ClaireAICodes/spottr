@@ -1,5 +1,5 @@
 import type { Exercise, ExerciseMedia, ExerciseRepository } from './exercises'
-import { EXERCISE_MEDIA_MAX_COUNT } from './exercises'
+import { assertExerciseMediaCount, EXERCISE_MEDIA_MAX_COUNT } from './exercises'
 
 const EXERCISE_DATABASE_VERSION = 1
 const EXERCISES_STORE = 'exercises'
@@ -88,6 +88,12 @@ export function createIndexedDbExerciseRepository(databaseName = 'spottr-v1-exer
       const transaction = database.transaction(EXERCISES_STORE, 'readwrite')
       const store = transaction.objectStore(EXERCISES_STORE)
       const existing = await requestResult(store.get(exercise.id)) as Exercise | undefined
+      if (!existing) {
+        try { assertExerciseMediaCount([exercise]) } catch (error) {
+          transaction.abort()
+          throw error
+        }
+      }
       store.put({ ...exercise, media: existing?.media ?? exercise.media })
       await transactionComplete(transaction)
     },
@@ -144,12 +150,26 @@ export function createIndexedDbExerciseRepository(databaseName = 'spottr-v1-exer
       })
     },
     async replaceAll(exercises) {
+      assertExerciseMediaCount(exercises)
       const database = await openDatabase()
       const transaction = database.transaction(EXERCISES_STORE, 'readwrite')
       const store = transaction.objectStore(EXERCISES_STORE)
       store.clear()
       exercises.forEach((exercise) => store.put(exercise))
       await transactionComplete(transaction)
+    },
+    async captureRollback() {
+      const database = await openDatabase()
+      const snapshot = await requestResult(database.transaction(EXERCISES_STORE).objectStore(EXERCISES_STORE).getAll()) as Exercise[]
+      return async () => {
+        const database = await openDatabase()
+        const transaction = database.transaction(EXERCISES_STORE, 'readwrite')
+        const completed = transactionComplete(transaction)
+        const store = transaction.objectStore(EXERCISES_STORE)
+        store.clear()
+        snapshot.forEach((exercise) => store.put(exercise))
+        await completed
+      }
     },
     async close() {
       if (!databasePromise) return

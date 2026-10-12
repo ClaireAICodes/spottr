@@ -31,6 +31,12 @@ export const EXERCISE_MEDIA_TOTAL_BYTES = 25 * 1024 * 1024
 export const EXERCISE_IMAGE_MAX_PIXELS = 20_000_000
 export const EXERCISE_MEDIA_MAX_COUNT = 5
 
+export function assertExerciseMediaCount(exercises: Exercise[]) {
+  if (exercises.some((exercise) => (exercise.media ?? []).length > EXERCISE_MEDIA_MAX_COUNT)) {
+    throw new Error('An exercise can have at most five media items. Remove extras at the source before replacing saved data.')
+  }
+}
+
 export interface ExerciseRepository {
   list(): Promise<Exercise[]>
   get(id: string): Promise<Exercise | null>
@@ -39,11 +45,13 @@ export interface ExerciseRepository {
   moveMedia(exerciseId: string, mediaId: string, direction: 'up' | 'down'): Promise<void>
   removeMedia(exerciseId: string, mediaId: string): Promise<void>
   replaceAll(exercises: Exercise[]): Promise<void>
+  captureRollback?(): Promise<() => Promise<void>>
   close?(): Promise<void>
 }
 
-export type ExerciseService = Omit<ReturnType<typeof createExerciseService>, 'waitForIdle'> & {
+export type ExerciseService = Omit<ReturnType<typeof createExerciseService>, 'waitForIdle' | 'captureRollback'> & {
   waitForIdle?: () => Promise<void>
+  captureRollback?: () => Promise<() => Promise<void>>
 }
 
 type ExerciseServiceOptions = {
@@ -207,7 +215,19 @@ export function createExerciseService(repository: ExerciseRepository, options: E
     },
 
     async replaceAll(exercises: Exercise[]) {
+      assertExerciseMediaCount(exercises)
       await mutate(() => repository.replaceAll(exercises.map(withMedia)))
+    },
+
+    async captureRollback() {
+      return mutate(async () => {
+        // No caller-supplied data: only a captured persisted snapshot can
+        // bypass incoming-media validation during restore compensation.
+        const rollback = repository.captureRollback
+          ? await repository.captureRollback()
+          : await repository.list().then((snapshot) => () => repository.replaceAll(snapshot))
+        return () => mutate(rollback)
+      })
     },
 
     async waitForIdle() {
@@ -330,6 +350,7 @@ export function createMemoryExerciseRepository(initialExercises: Exercise[] = []
     },
     async save(exercise) {
       const current = exercises.get(exercise.id)
+      if (!current) assertExerciseMediaCount([exercise])
       exercises.set(exercise.id, cloneExercise({ ...exercise, media: current?.media ?? exercise.media }))
     },
     async addMedia(exerciseId, media, totalLimit) {
@@ -364,8 +385,16 @@ export function createMemoryExerciseRepository(initialExercises: Exercise[] = []
       exercise.media = remaining
     },
     async replaceAll(nextExercises) {
+      assertExerciseMediaCount(nextExercises)
       exercises.clear()
       nextExercises.forEach((exercise) => exercises.set(exercise.id, cloneExercise(exercise)))
+    },
+    async captureRollback() {
+      const snapshot = [...exercises.values()].map(cloneExercise)
+      return async () => {
+        exercises.clear()
+        snapshot.forEach((exercise) => exercises.set(exercise.id, cloneExercise(exercise)))
+      }
     },
   }
 }

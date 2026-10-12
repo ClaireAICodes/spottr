@@ -422,10 +422,10 @@ export async function createSpottrBackup({
   }
 }
 
-async function replaceWithBackup(backup: SpottrBackup, services: BackupServices) {
+async function replaceWithBackup(backup: SpottrBackup, services: BackupServices, exerciseRollback?: () => Promise<void>) {
   const results = await Promise.allSettled([
     services.gymService.replaceAll(backup.entities.gyms, backup.entities.selectedGymId),
-    services.exerciseService.replaceAll(backup.entities.exercises.map(importExercise)),
+    exerciseRollback ? exerciseRollback() : services.exerciseService.replaceAll(backup.entities.exercises.map(importExercise)),
     services.workoutService.replaceAll(backup.entities.workouts),
     services.sessionService.replaceAll(backup.entities.activeSession, backup.entities.completedSessions),
     services.settingsService.update(backup.settings),
@@ -452,11 +452,12 @@ export function restoreSpottrBackup(backup: SpottrBackup, services: BackupServic
       services.settingsService.waitForIdle?.(),
     ])
     const previous = await createSpottrBackup(services)
+    const exerciseRollback = await services.exerciseService.captureRollback?.()
     try {
       await replaceWithBackup(backup, services)
     } catch (error) {
       try {
-        await replaceWithBackup(previous, services)
+        await replaceWithBackup(previous, services, exerciseRollback)
       } catch (rollbackError) {
         throw new AggregateError([error, rollbackError], 'Backup restore failed and current data could not be fully preserved')
       }
