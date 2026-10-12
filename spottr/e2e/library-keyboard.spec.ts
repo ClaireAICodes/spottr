@@ -1,4 +1,6 @@
 import { expect, test, type Locator } from '@playwright/test'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 for (const order of ['creation', 'reverse'] as const) {
   test(`keyboard saves repeated library destinations in ${order} order`, async ({ page }) => {
@@ -51,12 +53,12 @@ for (const order of ['creation', 'reverse'] as const) {
     // Public picker uploads identical files; observe order/actions only through UI.
     const picker = second.getByLabel(/^Add image or video/)
     for (let i = 0; i < 2; i++) {
-      await picker.setInputFiles({ name: 'same.mp4', mimeType: 'video/mp4', buffer: Buffer.from('video') })
+      await picker.setInputFiles({ name: 'same.webm', mimeType: 'video/webm', buffer: await readFile(resolve('e2e/fixtures/owned-motion-vp8.webm')) })
       await expect(second.getByRole('listitem')).toHaveCount(i + 1)
     }
     const context = `${name}, exercise ${position}`
-    await expect(second.getByRole('button', { name: `Move same.mp4 up — ${context}, media 2`, exact: true })).toBeEnabled()
-    await tabTo(second.getByRole('button', { name: `Remove same.mp4 — ${context}, media 2`, exact: true }))
+    await expect(second.getByRole('button', { name: `Move same.webm up — ${context}, media 2`, exact: true })).toBeEnabled()
+    await tabTo(second.getByRole('button', { name: `Remove same.webm — ${context}, media 2`, exact: true }))
     await page.keyboard.press('Enter')
     await expect(second.getByRole('listitem')).toHaveCount(1)
     await expect(articles.filter({ has: page.getByText('First destination', { exact: true }) }).getByRole('listitem')).toHaveCount(0)

@@ -22,6 +22,9 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
   const [isSaving, setIsSaving] = useState(false)
   const [mediaBusyId, setMediaBusyId] = useState<string | null>(null)
   const [mediaAnnouncement, setMediaAnnouncement] = useState('')
+  const [mediaProgress, setMediaProgress] = useState(0)
+  const [mediaCancelledId, setMediaCancelledId] = useState<string | null>(null)
+  const mediaPreparation = useRef<AbortController | null>(null)
   const loadRequest = useRef(0)
   const saveInFlight = useRef(false)
   const queryRef = useRef(query)
@@ -53,6 +56,8 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
     return () => {
       document.removeEventListener('focusin', relinquishUploadFocus)
       uploadFocus.current = null
+      mediaPreparation.current?.abort()
+      mediaPreparation.current = null
     }
   }, [])
 
@@ -137,19 +142,38 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
       ? { exerciseId: exercise.id, picker: event.target }
       : null
     setMediaBusyId(exercise.id)
+    const preparation = new AbortController()
+    mediaPreparation.current = preparation
+    setMediaProgress(0)
+    setMediaCancelledId(null)
     setError('')
     const failures: string[] = []
     for (const file of files) {
+      if (preparation.signal.aborted) break
       try {
-        const media = await service.addMedia(exercise.id, file)
+        setMediaProgress(0)
+        const media = await service.addMedia(exercise.id, file, {
+          signal: preparation.signal,
+          onProgress: (fraction) => {
+            if (mediaPreparation.current === preparation) setMediaProgress(fraction)
+          },
+        })
+        if (mediaPreparation.current !== preparation) return
         setExercises((current) => current.map((item) => item.id === exercise.id
           ? { ...item, media: [...item.media, media] }
           : item))
         setMediaAnnouncement(`${file.name} added to ${exercise.name}`)
       } catch (caught) {
+        if (mediaPreparation.current !== preparation) return
+        if (preparation.signal.aborted) {
+          setMediaCancelledId(exercise.id)
+          break
+        }
         failures.push(`${file.name}: ${caught instanceof Error ? caught.message : 'could not be added'}`)
       }
     }
+    if (mediaPreparation.current !== preparation) return
+    mediaPreparation.current = null
     if (failures.length) setError(failures.join(' '))
     setMediaBusyId(null)
   }
@@ -257,6 +281,18 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
                       : null
                   }} onChange={(event) => void addMedia(exercise, event)} />
                 </label>
+                {mediaBusyId === exercise.id && mediaPreparation.current && (
+                  <div>
+                    <p role="status">{mediaProgress < 1 ? 'Preparing media…' : 'Saving prepared media…'}</p>
+                    <progress aria-label={`Preparing media — ${context}`} max={1} value={mediaProgress} />
+                    {mediaProgress < 1 && <button type="button" onClick={() => {
+                      const picker = mediaPickerRefs.current.get(exercise.id)
+                      uploadFocus.current = picker ? { exerciseId: exercise.id, picker } : null
+                      mediaPreparation.current?.abort()
+                    }} aria-label={`Cancel media preparation — ${context}`}>Cancel preparation</button>}
+                  </div>
+                )}
+                {mediaCancelledId === exercise.id && <p role="status">Media preparation cancelled. Previously saved media is unchanged.</p>}
               </div>
             </article>
             )
