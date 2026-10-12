@@ -2,6 +2,7 @@ import {
   EXERCISE_IMAGE_MAX_BYTES,
   EXERCISE_IMAGE_MAX_PIXELS,
   EXERCISE_MEDIA_TOTAL_BYTES,
+  EXERCISE_MEDIA_MAX_COUNT,
   EXERCISE_VIDEO_MAX_BYTES,
   readSafeImageDimensionsFromBytes,
   type Exercise,
@@ -311,6 +312,14 @@ function isSpottrBackup(value: unknown): value is SpottrBackup {
     && isSettings(value.settings)
 }
 
+function assertIncomingMediaCount(value: unknown) {
+  if (!isRecord(value) || !isRecord(value.entities) || !Array.isArray(value.entities.exercises)) return
+  if (value.entities.exercises.some((exercise) => isRecord(exercise)
+    && Array.isArray(exercise.media) && exercise.media.length > EXERCISE_MEDIA_MAX_COUNT)) {
+    throw new Error('An exercise can have at most five media items. Remove extras at the source before importing. Your saved data has not been changed.')
+  }
+}
+
 export function parseSpottrBackup(serialized: string): SpottrBackup {
   if (new Blob([serialized]).size > MAX_BACKUP_FILE_BYTES) {
     throw new Error('This backup file is too large. Your saved data has not been changed.')
@@ -325,6 +334,7 @@ export function parseSpottrBackup(serialized: string): SpottrBackup {
     && typeof value.version === 'number' && value.version !== SPOTTR_BACKUP_VERSION) {
     throw new Error(`Spottr backup version ${value.version} is not supported. Your saved data has not been changed.`)
   }
+  assertIncomingMediaCount(value)
   if (!isSpottrBackup(value)) {
     throw new Error('This file is not a valid Spottr backup. Your saved data has not been changed.')
   }
@@ -428,6 +438,12 @@ let restoreQueue: Promise<void> = Promise.resolve()
 
 export function restoreSpottrBackup(backup: SpottrBackup, services: BackupServices) {
   const restore = async () => {
+    // Validate the public direct-restore boundary too, before taking a snapshot
+    // or starting any writes. Internal rollback must retain legacy excess media.
+    assertIncomingMediaCount(backup)
+    if (!isSpottrBackup(backup)) {
+      throw new Error('This file is not a valid Spottr backup. Your saved data has not been changed.')
+    }
     await Promise.all([
       services.gymService.waitForIdle?.(),
       services.exerciseService.waitForIdle?.(),

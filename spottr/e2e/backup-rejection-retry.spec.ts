@@ -103,9 +103,13 @@ for (const width of [390, 834, 1440]) {
     }
     expect(domains(current)).not.toEqual(domains(incoming))
     const input = page.getByLabel('Choose backup file')
+    const excess = structuredClone(incoming)
+    const reference = excess.entities.exercises[0].media[0]
+    excess.entities.exercises[0].media = Array.from({ length: 6 }, (_, index) => ({ ...reference, id: `owned-reference-${index}` }))
     for (const [filename, payload, message] of [
       ['malformed.json', '{"format":', 'not a valid Spottr backup'],
       ['future.json', JSON.stringify({ ...incoming, version: 2 }), 'backup version 2 is not supported'],
+      ['six-media.json', JSON.stringify(excess), 'at most five media items'],
     ]) {
       await input.setInputFiles({ name: filename, mimeType: 'application/json', buffer: Buffer.from(payload) })
       await expect(page.getByRole('alert')).toContainText(message)
