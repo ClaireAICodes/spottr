@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 
 test('owned WebM and MP4 fixtures are really resized, encoded, stored and playable; cancel/failure do not mutate', async ({ page }, testInfo) => {
   await page.goto('./')
+  await page.getByRole('tab', { name: 'Train', exact: true }).click()
   const result = await page.evaluate(async () => {
     const moduleUrl = '/spottr/src/exercises.ts'
     const { createExerciseService, createMemoryExerciseRepository } = await import(/* @vite-ignore */ moduleUrl)
@@ -47,10 +48,38 @@ test('owned WebM and MP4 fixtures are really resized, encoded, stored and playab
     try { await service.addMedia(exercise.id, file, { signal: abort.signal, onProgress: () => abort.abort() }) } catch (error) { cancelled = (error as Error).name === 'AbortError' }
     let failed = false
     try { await service.addMedia(exercise.id, new File(['corrupt'], 'broken.mp4', { type: 'video/mp4' })) } catch { failed = true }
-    return { proofs, cancelled, failed, unchanged: before === JSON.stringify(await service.search()), browser: navigator.userAgent }
+    const pendingProofs = []
+    for (const api of ['resume', 'play'] as const) {
+      for (const mode of ['cancel', 'deadline', 'reject'] as const) {
+        const originalResume = AudioContext.prototype.resume
+        const originalPlay = HTMLMediaElement.prototype.play
+        const originalTimer = window.setTimeout
+        let entered = false
+        const held = () => { entered = true; return mode === 'reject' ? Promise.reject(new Error('Browser API rejected')) : new Promise<void>(() => {}) }
+        if (api === 'resume') AudioContext.prototype.resume = held
+        else HTMLMediaElement.prototype.play = held
+        if (mode === 'deadline') window.setTimeout = ((handler: TimerHandler, delay?: number) => originalTimer(handler, delay === 60000 ? 150 : delay)) as typeof window.setTimeout
+        const controller = new AbortController()
+        const pending = service.addMedia(exercise.id, file, { signal: controller.signal })
+          .then(() => 'committed', (error: Error) => error.name === 'AbortError' ? 'cancelled' : error.message)
+        if (mode === 'cancel') {
+          while (!entered) await new Promise((resolve) => originalTimer(resolve, 10))
+          controller.abort()
+        }
+        const outcome = await Promise.race([pending, new Promise<string>((resolve) => originalTimer(() => resolve('hung'), 500))])
+        AudioContext.prototype.resume = originalResume; HTMLMediaElement.prototype.play = originalPlay; window.setTimeout = originalTimer
+        pendingProofs.push({ api, mode, entered, outcome })
+        if (outcome === 'hung') return { proofs, cancelled, failed, pendingProofs, unchanged: before === JSON.stringify(await service.search()), browser: navigator.userAgent }
+      }
+    }
+    const fixtureBase64 = await new Promise<string>((resolve) => {
+      const reader = new FileReader(); reader.onload = () => resolve((reader.result as string).split(',')[1]); reader.readAsDataURL(file)
+    })
+    return { proofs, cancelled, failed, pendingProofs, fixtureBase64, unchanged: before === JSON.stringify(await service.search()), browser: navigator.userAgent }
   })
-  await testInfo.attach('codec-proof.json', { body: JSON.stringify(result, null, 2), contentType: 'application/json' })
-  console.log(JSON.stringify(result))
+  const { fixtureBase64, ...receipt } = result
+  await testInfo.attach('codec-proof.json', { body: JSON.stringify(receipt, null, 2), contentType: 'application/json' })
+  console.log(JSON.stringify(receipt))
   expect(result.proofs.filter((p) => !p.unsupported)).toHaveLength(2)
   for (const proof of result.proofs) {
     expect(proof.outputHash).not.toBe(proof.sourceHash)
@@ -62,4 +91,23 @@ test('owned WebM and MP4 fixtures are really resized, encoded, stored and playab
   expect(result.cancelled).toBe(true)
   expect(result.failed).toBe(true)
   expect(result.unchanged).toBe(true)
+  expect(result.pendingProofs).toHaveLength(6)
+  for (const proof of result.pendingProofs) {
+    expect(proof.entered).toBe(true)
+    expect(proof.outcome).toBe(proof.mode === 'cancel' ? 'cancelled' : proof.mode === 'reject' ? 'Browser API rejected' : 'Video preparation exceeded the 60 second budget. Choose a shorter clip.')
+  }
+  await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
+  await page.getByLabel('Exercise name').fill('Natural upload')
+  await page.getByRole('button', { name: 'Save exercise' }).click()
+  const picker = page.getByLabel('Add image or video — Natural upload', { exact: true })
+  for (let i = 0; i < 30 && !(await picker.evaluate((node) => node === document.activeElement)); i++) await page.keyboard.press('Tab')
+  await expect(picker).toBeFocused()
+  const choosing = page.waitForEvent('filechooser')
+  await page.keyboard.press('Enter')
+  await (await choosing).setFiles({ name: 'owned.webm', mimeType: 'video/webm', buffer: Buffer.from(fixtureBase64!, 'base64') })
+  await expect(page.getByText('owned.webm', { exact: true })).toBeVisible({ timeout: 10000 })
+  await expect(picker).toBeEnabled()
+  const video = page.getByRole('article', { name: 'Natural upload', exact: true }).locator('video')
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.videoWidth)).toBe(720)
+  await testInfo.attach('natural-upload.png', { body: await page.screenshot(), contentType: 'image/png' })
 })

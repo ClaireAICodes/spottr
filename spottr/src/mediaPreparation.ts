@@ -55,9 +55,22 @@ export async function compressExerciseVideo(file: File, options: MediaPreparatio
   }
 }
 
+function waitForOperation(operation: Promise<void>, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const cancel = () => { cleanup(); reject(signal.reason ?? new DOMException('Media preparation cancelled', 'AbortError')) }
+    const cleanup = () => signal.removeEventListener('abort', cancel)
+    signal.addEventListener('abort', cancel, { once: true })
+    operation.then(() => { cleanup(); resolve() }, (error) => { cleanup(); reject(error) })
+    if (signal.aborted) cancel()
+  })
+}
+
 async function encode(file: File, type: string, bitrate: number, signal: AbortSignal, progress: (fraction: number) => void) {
   const video = document.createElement('video')
   video.playsInline = true
+  // Decoded audio goes to the recorder via Web Audio, never to the speakers.
+  // Muted source playback also avoids a second audible autoplay permission gate.
+  video.muted = true
   const url = URL.createObjectURL(file)
   let stream: MediaStream | undefined
   let recorder: MediaRecorder | undefined
@@ -83,7 +96,7 @@ async function encode(file: File, type: string, bitrate: number, signal: AbortSi
     audio = new AudioContext()
     const destination = audio.createMediaStreamDestination()
     audio.createMediaElementSource(video).connect(destination)
-    await audio.resume()
+    await waitForOperation(audio.resume(), signal)
     destination.stream.getAudioTracks().forEach((track) => stream!.addTrack(track))
     aborted(signal)
     recorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: bitrate, audioBitsPerSecond: 64_000 })
@@ -112,14 +125,15 @@ async function encode(file: File, type: string, bitrate: number, signal: AbortSi
     }
     recorder.start(200)
     draw()
-    await video.play()
+    await waitForOperation(video.play(), signal)
     return await recorded
   } finally {
     cancelAnimationFrame(frame)
     video.pause(); video.onended = null; video.onerror = null
     if (recorder && recorder.state !== 'inactive') recorder.stop()
     stream?.getTracks().forEach((track) => track.stop())
-    if (audio) await audio.close()
+    // close() must not hold cancellation hostage if a browser leaves it pending.
+    if (audio) void audio.close().catch(() => undefined)
     video.removeAttribute('src'); video.load()
     URL.revokeObjectURL(url)
   }

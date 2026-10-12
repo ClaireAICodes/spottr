@@ -60,8 +60,26 @@ released on completion/failure/cancellation.
 Proved input codecs: VP8 WebM and AVC MP4 only, in the named Chromium environment.
 Proved output: VP8/Opus WebM. Capability candidates are not a supported-codec
 claim: MP4 output/other encoders, Firefox, Safari and physical devices remain OPEN.
-JPEG/PNG image path is unchanged. The probe explicitly enables Chromium autoplay;
-user-gesture/audio-context behavior without that override remains OPEN.
+JPEG/PNG image path is unchanged. The B2 repair removes the autoplay launch override.
+Normal Chromium policy is exercised after a natural Train-tab click and through
+the public ExerciseLibrary keyboard Tab/Enter file chooser with a real owned WebM.
+The public upload succeeds and its preview decodes at width 720. This is browser
+chooser automation, not physical OS chooser certification. Source playback is
+muted; decoded audio still routes through Web Audio, with audible content OPEN.
+
+B2 regression RED: pending AudioContext.resume cancellation returned `hung` after
+500 ms, with unchanged dataset. GREEN: resume and play each reject on cancellation,
+absolute deadline or browser rejection; complete memory-service dataset unchanged.
+The deadline test accelerates only the existing 60000 ms timer to 150 ms; successful
+real codec runtime measurements use the unchanged production deadline. Abort-aware
+waits observe late API rejection and remove abort listeners. Finally stops recorder
+and stream tracks, pauses/removes source, cancels frames and revokes URL; audio close
+is requested without making a pending close promise hold cancellation hostage.
+
+Re-executed no-override proof: WebM 1132334 -> 250248 bytes, 2278.3 ms;
+MP4 1073574 -> 249054 bytes, 2210.4 ms. Both VP8/Opus WebM at 720x406,
+decoded and playback advanced; exact varying hashes attached in codec-proof.json.
+Full units 130/130 and production build pass. Natural-upload screenshot attached.
 
 ## Five-item boundary and legacy design
 
@@ -113,8 +131,8 @@ are required before claiming correctness. No broad restore rewrite in this slot.
 
 ## Remaining acceptance and fallback
 
-OPEN: visible UI progress/Cancel and departure behavior; no-autoplay-override
-browser proof; audio-content proof; actual encoded output persistence/reload and
+OPEN: visible UI progress/Cancel and departure behavior;
+audio-content proof; actual encoded output persistence/reload and
 backup byte equality; stored owned fixtures; time/byte/retry/unsupported-engine
 edge coverage; production public/offline playback. Several historical browser
 specs upload strings labelled MP4 and must move to genuine owned fixtures (they
