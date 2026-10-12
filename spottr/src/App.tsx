@@ -1,57 +1,502 @@
-import './index.css'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Activity,
+  BarChart3,
+  CalendarDays,
+  ChevronRight,
+  Dumbbell,
+  Home,
+  Play,
+  SlidersHorizontal,
+  Sparkles,
+} from 'lucide-react'
+import { ActionButton, Panel, StatusPill } from './primitives'
+import { ActiveSession } from './ActiveSession'
+import { SessionHistory } from './SessionHistory'
+import { SessionSummary } from './SessionSummary'
+import { ExerciseLibrary } from './ExerciseLibrary'
+import { GymManager } from './GymManager'
+import { WorkoutPlanner } from './WorkoutPlanner'
+import { SettingsView } from './SettingsView'
+import { useInstallPrompt } from './InstallPanel'
+import { createIndexedDbExerciseRepository } from './exerciseRepository'
+import { createExerciseService, type ExerciseService } from './exercises'
+import { createIndexedDbGymRepository } from './gymRepository'
+import { createGymService, type Gym, type GymService } from './gyms'
+import { createIndexedDbWorkoutRepository } from './workoutRepository'
+import { createIndexedDbSessionRepository } from './sessionRepository'
+import { createMemorySessionRepository, createSessionService, type CompletedWorkoutSession, type SessionService, type WorkoutSession } from './sessions'
+import { withWorkoutIntegrityLock } from './workoutIntegrity'
+import { createWorkoutService, type WorkoutService, type WorkoutTemplate } from './workouts'
+import { createIndexedDbSettingsRepository } from './settingsRepository'
+import { createSettingsService, DEFAULT_SETTINGS, type AppSettings, type SettingsService } from './settings'
 
-function App() {
+const tabs = [
+  { label: 'Home', icon: Home },
+  { label: 'Train', icon: Dumbbell },
+  { label: 'Plan', icon: CalendarDays },
+  { label: 'History', icon: BarChart3 },
+  { label: 'Settings', icon: SlidersHorizontal },
+] as const
+
+const compactNavQuery = '(max-width: 820px)'
+const defaultGymService = createGymService(createIndexedDbGymRepository())
+const defaultExerciseService = createExerciseService(createIndexedDbExerciseRepository())
+const defaultWorkoutService = createWorkoutService(createIndexedDbWorkoutRepository(), {
+  gymExists: async (id) => Boolean(await defaultGymService.get(id)),
+})
+const defaultSessionService = createSessionService(
+  createIndexedDbSessionRepository(),
+  defaultWorkoutService,
+  defaultExerciseService,
+  { resolveGymName: async (id) => (await defaultGymService.get(id))?.name ?? null },
+)
+const defaultSettingsService = createSettingsService(createIndexedDbSettingsRepository())
+
+export function App({
+  gymService = defaultGymService,
+  exerciseService = defaultExerciseService,
+  workoutService = defaultWorkoutService,
+  sessionService,
+  settingsService = defaultSettingsService,
+}: {
+  gymService?: GymService
+  exerciseService?: ExerciseService
+  workoutService?: WorkoutService
+  sessionService?: SessionService
+  settingsService?: SettingsService
+}) {
+  const [activeTab, setActiveTab] = useState(0)
+  const [isManagingGyms, setIsManagingGyms] = useState(false)
+  const [selectedGym, setSelectedGym] = useState<Gym | null>(null)
+  const [gymStatus, setGymStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null)
+  const [completedSession, setCompletedSession] = useState<CompletedWorkoutSession | null>(null)
+  const [sessionTemplates, setSessionTemplates] = useState<WorkoutTemplate[]>([])
+  const [isSessionOpen, setIsSessionOpen] = useState(false)
+  const [sessionLoadError, setSessionLoadError] = useState('')
+  const [templateLoadError, setTemplateLoadError] = useState('')
+  const [templateStatus, setTemplateStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [templateReload, setTemplateReload] = useState(0)
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+  const [settingsStatus, setSettingsStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [settingsReload, setSettingsReload] = useState(0)
+  const settingsExitButton = useRef<HTMLButtonElement>(null)
+  const settingsRetryButton = useRef<HTMLButtonElement>(null)
+  const settingsRetryOrigin = useRef<number | null>(null)
+  const mainView = useRef<HTMLElement>(null)
+  const [isBackupRestoreInProgress, setIsBackupRestoreInProgress] = useState(false)
+  const selectedGymRequest = useRef(0)
+  const activeSessionRequest = useRef(0)
+  const [isCompactNav, setIsCompactNav] = useState(
+    () => typeof window.matchMedia === 'function' && window.matchMedia(compactNavQuery).matches,
+  )
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const resumeButton = useRef<HTMLButtonElement>(null)
+  const [restoreResumeFocus, setRestoreResumeFocus] = useState(false)
+  const installPrompt = useInstallPrompt()
+  const managedGymService = useMemo(() => ({
+    ...gymService,
+    async remove(id: string) {
+      await withWorkoutIntegrityLock(async () => {
+        if ((await workoutService.list(id)).length > 0) {
+          throw new Error('Delete linked workouts before deleting this gym')
+        }
+        await gymService.remove(id)
+      })
+    },
+  }), [gymService, workoutService])
+  const activeSessionService = useMemo(() => sessionService ?? (
+    workoutService === defaultWorkoutService && exerciseService === defaultExerciseService
+      ? defaultSessionService
+      : createSessionService(createMemorySessionRepository(), workoutService, exerciseService, {
+          resolveGymName: async (id) => (await gymService.get(id))?.name ?? null,
+        })
+  ), [exerciseService, gymService, sessionService, workoutService])
+
+  useEffect(() => {
+    let current = true
+    setSettingsStatus('loading')
+    settingsService.get().then((loaded) => {
+      if (current) {
+        setSettings(loaded)
+        setSettingsStatus('ready')
+      }
+    }).catch(() => { if (current) setSettingsStatus('error') })
+    return () => { current = false }
+  }, [settingsService, settingsReload])
+
+  useEffect(() => {
+    if (!window.matchMedia) return
+
+    const query = window.matchMedia(compactNavQuery)
+    const updateOrientation = () => setIsCompactNav(query.matches)
+
+    updateOrientation()
+    query.addEventListener('change', updateOrientation)
+    return () => query.removeEventListener('change', updateOrientation)
+  }, [])
+
+  function loadSelectedGym() {
+    const requestId = ++selectedGymRequest.current
+    setGymStatus('loading')
+    gymService.getSelected().then((gym) => {
+      if (requestId !== selectedGymRequest.current) return
+      setSelectedGym(gym)
+      setGymStatus('ready')
+    }).catch(() => {
+      if (requestId !== selectedGymRequest.current) return
+      setSelectedGym(null)
+      setGymStatus('error')
+    })
+  }
+
+  useEffect(() => {
+    loadSelectedGym()
+    return () => { selectedGymRequest.current += 1 }
+  }, [gymService])
+
+  async function loadActiveSession() {
+    const requestId = ++activeSessionRequest.current
+    try {
+      const session = await activeSessionService.getActive()
+      if (requestId !== activeSessionRequest.current) return
+      setActiveSession(session)
+      setSessionLoadError('')
+    } catch {
+      if (requestId !== activeSessionRequest.current) return
+      setSessionLoadError('Your active session could not be loaded. Your saved data has not been changed.')
+    }
+  }
+
+  useEffect(() => {
+    setActiveSession(null)
+    setIsSessionOpen(false)
+    setSessionLoadError('')
+    void loadActiveSession()
+    return () => { activeSessionRequest.current += 1 }
+  }, [activeSessionService])
+
+  useEffect(() => {
+    let current = true
+    if (!selectedGym) {
+      setSessionTemplates([])
+      setTemplateStatus('idle')
+      return () => { current = false }
+    }
+    setSessionTemplates([])
+    setTemplateLoadError('')
+    setTemplateStatus('loading')
+    workoutService.list(selectedGym.id).then((templates) => {
+      if (current) {
+        setSessionTemplates(templates)
+        setTemplateLoadError('')
+        setTemplateStatus('ready')
+      }
+    }).catch(() => {
+      if (current) {
+        setTemplateLoadError('Your saved workouts could not be loaded. Your saved data has not been changed.')
+        setTemplateStatus('error')
+      }
+    })
+    return () => { current = false }
+  }, [activeTab, selectedGym, workoutService, templateReload])
+
+  async function startSession(templateId: string) {
+    const session = await activeSessionService.start(templateId, selectedGym?.name)
+    activeSessionRequest.current += 1
+    setActiveSession(session)
+    setIsSessionOpen(true)
+  }
+
+  function completeSession(session: CompletedWorkoutSession) {
+    activeSessionRequest.current += 1
+    setActiveSession(null)
+    setIsSessionOpen(false)
+    setCompletedSession(session)
+  }
+
+  function selectTab(index: number) {
+    settingsRetryOrigin.current = null
+    setActiveTab(index)
+    setIsManagingGyms(false)
+    tabRefs.current[index]?.focus()
+  }
+
+  function handleBackupRestored(restoredSettings: AppSettings) {
+    setSettings(restoredSettings)
+    setCompletedSession(null)
+    setIsSessionOpen(false)
+    setSelectedGym(null)
+    setActiveSession(null)
+    setSessionTemplates([])
+    setSessionLoadError('')
+    setTemplateLoadError('')
+    setTemplateStatus('idle')
+    void loadSelectedGym()
+    void loadActiveSession()
+    setTemplateReload((value) => value + 1)
+  }
+
+  function handleTabKey(event: React.KeyboardEvent, index: number) {
+    let next: number | undefined
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % tabs.length
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + tabs.length) % tabs.length
+    if (event.key === 'Home') next = 0
+    if (event.key === 'End') next = tabs.length - 1
+    if (next !== undefined) {
+      event.preventDefault()
+      selectTab(next)
+    }
+  }
+
+  const current = tabs[activeTab]
+  const isEnteringSession = activeTab === 0 && isSessionOpen && Boolean(activeSession) && !completedSession
+  const isFocusedSession = isEnteringSession && settingsStatus === 'ready'
+  useEffect(() => {
+    if (isEnteringSession && settingsStatus !== 'ready') settingsExitButton.current?.focus()
+  }, [isEnteringSession, settingsStatus])
+
+  useEffect(() => {
+    if (settingsRetryOrigin.current !== activeTab || settingsStatus === 'loading') return
+    const target = settingsStatus === 'error'
+      ? (isEnteringSession ? settingsExitButton.current : settingsRetryButton.current)
+      : mainView.current?.querySelector<HTMLElement>(isFocusedSession ? '#active-session-title' : 'h1')
+    if (!target?.isConnected) return
+    target.focus()
+    if (document.activeElement === target) settingsRetryOrigin.current = null
+  }, [activeTab, settingsStatus, isEnteringSession, isFocusedSession])
+
+  function exitSession() {
+    settingsRetryOrigin.current = null
+    setIsSessionOpen(false)
+    setRestoreResumeFocus(true)
+  }
+  useEffect(() => {
+    if (!restoreResumeFocus || isFocusedSession) return
+    const target = resumeButton.current
+    if (!target?.isConnected || target.disabled) return
+    target.focus()
+    if (document.activeElement === target) setRestoreResumeFocus(false)
+  }, [restoreResumeFocus, isFocusedSession, activeSession])
+  const pageTitle = isManagingGyms ? 'Gyms' : current.label
+  const settingsSensitiveView = activeTab === 2
+    || activeTab === 3
+    || (activeTab === 0 && Boolean(completedSession || (isSessionOpen && activeSession)))
+
   return (
-    <div className="relative min-h-screen">
-      {/* Floating background blobs */}
-      <div className="blob blob-1"></div>
-      <div className="blob blob-2"></div>
-      <div className="blob blob-3"></div>
+    <div className={`app-shell${isFocusedSession ? ' focused-session-shell' : ''}`}>
+      {!isFocusedSession && <aside className="brand-rail" aria-label="Spottr identity">
+        <a className="brand" href="#main" aria-label="Spottr home">
+          <span className="brand-mark" aria-hidden="true"><Activity size={22} /></span>
+          <span>spottr</span>
+        </a>
+        <p className="brand-note">Your training,<br />clearly in view.</p>
+      </aside>}
 
-      <div className="relative z-10 p-8 max-w-4xl mx-auto">
-        <h1 className="gradient-text text-5xl font-extrabold mb-2" style={{fontFamily: 'Playfair Display, serif'}}>
-          Spottr 💪
-        </h1>
-        <p className="text-slate-300 mb-8">Your premium workout tracking companion — coming soon!</p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="glass-card">
-            <h2 className="text-2xl font-extrabold mb-4" style={{fontFamily: 'Playfair Display, serif'}}>
-              Status 🟢
-            </h2>
-            <ul className="space-y-2 text-slate-300 text-sm">
-              <li>✅ Phase 1 — Project foundation & glassmorphism UI</li>
-              <li>✅ Phase 2 — Database layer (Dexie.js + 8 tables)</li>
-              <li>⏳ Phase 3 — Core CRUD components (in progress)</li>
-              <li>⏳ Phase 4 — Media handling & compression</li>
-              <li>⏳ Phase 5 — Workout execution flow</li>
-              <li>⏳ Phase 6 — Progressive overload system</li>
-            </ul>
+      <main ref={mainView} id="main" className="main-canvas" tabIndex={-1}>
+        {!isFocusedSession && <header className="topbar">
+          <div>
+            <p className="eyebrow">Monday · September 21</p>
+            <h1 tabIndex={-1}>{pageTitle}</h1>
           </div>
+          <button className="avatar-button" aria-label="Open profile"><span aria-hidden="true">P</span></button>
+        </header>}
 
-          <div className="glass-card">
-            <h2 className="text-2xl font-extrabold mb-4" style={{fontFamily: 'Playfair Display, serif'}}>
-              Tech Stack ⚡
-            </h2>
-            <ul className="space-y-2 text-slate-300 text-sm">
-              <li>🎨 React 19 + TypeScript + Vite</li>
-              <li>💎 Tailwind CSS + Glassmorphism</li>
-              <li>🗄️ Dexie.js (IndexedDB)</li>
-              <li>🧠 Zustand (state management)</li>
-              <li>📦 JSZip (export / import backups)</li>
-              <li>📅 date-fns + uuid</li>
-            </ul>
-          </div>
+        {settingsSensitiveView && settingsStatus === 'loading' ? (
+          <section id="main-view" role="tabpanel" aria-labelledby={`tab-${current.label.toLowerCase()}`}>
+            <p role="status">Loading saved settings…</p>
+            {isEnteringSession && <ActionButton ref={settingsExitButton} onClick={exitSession}>Exit workout</ActionButton>}
+          </section>
+        ) : settingsSensitiveView && settingsStatus === 'error' ? (
+          <section id="main-view" role="tabpanel" aria-labelledby={`tab-${current.label.toLowerCase()}`}>
+            <p role="alert" className="form-message error-copy">Your saved settings could not be loaded. Your saved data has not been changed.</p>
+            {isEnteringSession && <ActionButton ref={settingsExitButton} onClick={exitSession}>Exit workout</ActionButton>}
+            <ActionButton ref={settingsRetryButton} onClick={() => {
+              settingsRetryOrigin.current = activeTab
+              setSettingsStatus('loading')
+              setSettingsReload((value) => value + 1)
+            }}>Retry saved settings</ActionButton>
+          </section>
+        ) : activeTab === 0 && completedSession ? (
+          <SessionSummary
+            session={completedSession}
+            sessionService={activeSessionService}
+            settings={settings}
+            onViewHistory={() => { setCompletedSession(null); selectTab(3) }}
+            onDone={() => setCompletedSession(null)}
+          />
+        ) : activeTab === 0 && isSessionOpen && activeSession ? (
+          <ActiveSession initialSession={activeSession} sessionService={activeSessionService} exerciseService={exerciseService} settings={settings} onSessionChange={setActiveSession} onComplete={completeSession} onExit={exitSession} />
+        ) : activeTab === 0 && isManagingGyms ? (
+          <GymManager
+            service={managedGymService}
+            onClose={() => setIsManagingGyms(false)}
+            onSelectionChange={loadSelectedGym}
+          />
+        ) : activeTab === 0 ? (
+          <HomeFrames
+            selectedGym={selectedGym}
+            gymStatus={gymStatus}
+            onManageGyms={() => setIsManagingGyms(true)}
+            onRetry={loadSelectedGym}
+            templates={sessionTemplates}
+            activeSession={activeSession}
+            onStart={startSession}
+            onResume={() => setIsSessionOpen(true)}
+            resumeButton={resumeButton}
+            sessionLoadError={sessionLoadError}
+            templateLoadError={templateLoadError}
+            templateStatus={templateStatus}
+            onRetrySession={() => void loadActiveSession()}
+            onRetryTemplates={() => setTemplateReload((value) => value + 1)}
+          />
+        ) : activeTab === 1 ? (
+          <ExerciseLibrary service={exerciseService} />
+        ) : activeTab === 2 ? (
+          <WorkoutPlanner workoutService={workoutService} gymService={gymService} exerciseService={exerciseService} settings={settings} />
+        ) : activeTab === 3 ? (
+          <SessionHistory sessionService={activeSessionService} settings={settings} />
+        ) : (
+          <SettingsView
+            settingsService={settingsService}
+            exerciseService={exerciseService}
+            gymService={gymService}
+            workoutService={workoutService}
+            sessionService={activeSessionService}
+            onSettingsChange={setSettings}
+            onBackupRestored={handleBackupRestored}
+            onBackupRestoreStateChange={setIsBackupRestoreInProgress}
+            installPrompt={installPrompt}
+          />
+        )}
+      </main>
+
+      {!isFocusedSession && <nav className="primary-nav" aria-label="Primary">
+        <div role="tablist" aria-label="Spottr sections" aria-orientation={isCompactNav ? 'horizontal' : 'vertical'}>
+          {tabs.map(({ label, icon: Icon }, index) => (
+            <button
+              key={label}
+              ref={(node) => { tabRefs.current[index] = node }}
+              id={`tab-${label.toLowerCase()}`}
+              role="tab"
+              type="button"
+              aria-selected={activeTab === index}
+              aria-controls="main-view"
+              tabIndex={activeTab === index ? 0 : -1}
+              disabled={isBackupRestoreInProgress}
+              onClick={() => selectTab(index)}
+              onKeyDown={(event) => handleTabKey(event, index)}
+            >
+              <Icon size={21} strokeWidth={2.2} aria-hidden="true" />
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
-
-        <p className="text-slate-500 text-xs mt-8 text-center">
-          📖 <a href="?test" className="text-accent hover:underline">Run Phase 2 Database Tests</a> 
-          &nbsp;&bull;&nbsp;
-          <a href="/phase2-verify.html" className="text-accent hover:underline">Standalone HTML Test</a>
-        </p>
-      </div>
+      </nav>}
     </div>
   )
 }
 
-export default App
+function HomeFrames({
+  selectedGym,
+  gymStatus,
+  onManageGyms,
+  onRetry,
+  templates,
+  activeSession,
+  onStart,
+  onResume,
+  resumeButton,
+  sessionLoadError,
+  templateLoadError,
+  templateStatus,
+  onRetrySession,
+  onRetryTemplates,
+}: {
+  selectedGym: Gym | null
+  gymStatus: 'loading' | 'ready' | 'error'
+  onManageGyms: () => void
+  onRetry: () => void
+  templates: WorkoutTemplate[]
+  activeSession: WorkoutSession | null
+  onStart: (templateId: string) => Promise<void>
+  onResume: () => void
+  resumeButton: React.RefObject<HTMLButtonElement | null>
+  sessionLoadError: string
+  templateLoadError: string
+  templateStatus: 'idle' | 'loading' | 'ready' | 'error'
+  onRetrySession: () => void
+  onRetryTemplates: () => void
+}) {
+  const [isChoosingWorkout, setIsChoosingWorkout] = useState(false)
+  const [startError, setStartError] = useState('')
+
+  async function start(templateId: string) {
+    setStartError('')
+    try {
+      await onStart(templateId)
+    } catch (caught) {
+      setStartError(caught instanceof Error ? caught.message : 'The workout could not be started.')
+    }
+  }
+
+  return (
+    <div id="main-view" role="tabpanel" aria-labelledby="tab-home" className="home-grid">
+      <Panel className="welcome-panel" aria-labelledby="welcome-title">
+        <div className="orb" aria-hidden="true"><Sparkles size={24} /></div>
+        <StatusPill>Fresh start</StatusPill>
+        <h2 id="welcome-title">Ready when you are.</h2>
+        {gymStatus === 'loading' ? (
+          <p role="status">Loading your training place…</p>
+        ) : gymStatus === 'error' ? (
+          <div role="alert">
+            <p>Your gym context could not be loaded.</p>
+            <button type="button" className="text-button" onClick={onRetry}>Try again</button>
+          </div>
+        ) : selectedGym ? (
+          <p>Work out at <strong>{selectedGym.name}</strong>. Future workout choices will stay scoped to this gym.</p>
+        ) : (
+          <p>Add a gym before starting so your future routines match the equipment around you.</p>
+        )}
+        <ActionButton disabled={gymStatus !== 'ready' || !selectedGym || templateStatus !== 'ready' || templates.length === 0 || Boolean(activeSession) || Boolean(sessionLoadError)} onClick={() => setIsChoosingWorkout(true)}>
+          <Play size={18} fill="currentColor" aria-hidden="true" /> {selectedGym ? `Start workout at ${selectedGym.name}` : 'Choose a gym to start'}
+        </ActionButton>
+        {isChoosingWorkout && !activeSession && (
+          <div className="workout-choices" aria-label="Choose a workout">
+            {templates.map((template) => <button key={template.id} type="button" onClick={() => void start(template.id)}>Start {template.name}</button>)}
+          </div>
+        )}
+        {startError && <p role="alert" className="form-message error-copy">{startError}</p>}
+        {templateLoadError && <div role="alert" className="form-message error-copy"><p>{templateLoadError}</p><button type="button" className="text-button" onClick={onRetryTemplates}>Try again</button></div>}
+        <button type="button" className="manage-gyms-button" onClick={onManageGyms}>Manage gyms</button>
+        {!templateLoadError && !activeSession && selectedGym && templateStatus === 'ready' && templates.length === 0 && <small>No saved workouts for this gym yet.</small>}
+      </Panel>
+
+      <Panel className="resume-panel" aria-labelledby="resume-title">
+        <div className="panel-kicker">
+          <span>In progress</span>
+          <span className="live-dot">Paused</span>
+        </div>
+        <h2 id="resume-title">Resume your session</h2>
+        {sessionLoadError && <div role="alert"><p>{sessionLoadError}</p><button type="button" className="text-button" onClick={onRetrySession}>Try again</button></div>}
+        {!sessionLoadError && <>
+          <p className="session-name">{activeSession?.name ?? 'No session in progress'}</p>
+          <dl className="session-stats">
+            <div><dt>Status</dt><dd>{activeSession ? 'Saved' : 'Ready'}</dd></div>
+            <div><dt>Exercises</dt><dd>{activeSession?.exercises.length ?? 0}</dd></div>
+            <div><dt>Logged</dt><dd>{activeSession?.exercises.flatMap(({ sets }) => sets).filter(({ completedAt }) => completedAt).length ?? 0}</dd></div>
+          </dl>
+          <ActionButton ref={resumeButton} disabled={!activeSession} className="dark-action" onClick={onResume}>
+            {activeSession ? `Resume ${activeSession.name}` : 'Nothing to resume'} <ChevronRight size={18} aria-hidden="true" />
+          </ActionButton>
+          <small>{activeSession ? 'Your latest set log is stored on this device.' : 'Start a saved workout to create a session snapshot.'}</small>
+        </>}
+      </Panel>
+
+      <section className="principle-strip" aria-label="Product principles">
+        <span>Clear</span><span>Calm</span><span>Ready</span>
+      </section>
+    </div>
+  )
+}
