@@ -346,12 +346,13 @@ function blobToBase64(blob: Blob) {
     const reader = new FileReader()
     reader.onload = () => {
       const result = String(reader.result)
-      const separator = result.indexOf(',')
+      const delimiter = ';base64,'
+      const separator = result.indexOf(delimiter)
       if (separator < 0) {
         reject(new Error('Exercise media could not be encoded for backup'))
         return
       }
-      resolve(result.slice(separator + 1))
+      resolve(result.slice(separator + delimiter.length))
     }
     reader.onerror = () => reject(reader.error ?? new Error('Exercise media could not be read for backup'))
     reader.readAsDataURL(blob)
