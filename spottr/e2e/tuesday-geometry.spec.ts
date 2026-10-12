@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 async function tabTo(page: Page, target: Locator) {
   for (let i = 0; i < 100; i++) {
@@ -74,7 +75,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 667 }
     }
     const input = page.getByLabel(`Add image or video — ${name} 3`, { exact: true })
     for (let i = 0; i < 4; i++) {
-      await input.setInputFiles({ name: `form-${i}.mp4`, mimeType: 'video/mp4', buffer: Buffer.from('geometry fixture') })
+      await input.setInputFiles({ name: `form-${i}.webm`, mimeType: 'video/webm', buffer: await readFile(resolve('e2e/fixtures/owned-motion-vp8.webm')) })
       await expect(page.getByRole('article', { name: `${name} 3`, exact: true }).getByRole('listitem')).toHaveCount(i + 1)
     }
     await tabTo(page, input)
@@ -88,7 +89,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 667 }
     expect(receipt.hits.every(hit => hit.correct)).toBe(true)
     const chooser = page.waitForEvent('filechooser')
     await page.mouse.click(receipt.hits[0].x, receipt.hits[0].y)
-    await (await chooser).setFiles({ name: 'form.mp4', mimeType: 'video/mp4', buffer: Buffer.from('geometry fixture; no native playback certification') })
+    await (await chooser).setFiles({ name: 'form.webm', mimeType: 'video/webm', buffer: await readFile(resolve('e2e/fixtures/owned-motion-vp8.webm')) })
     await expect(page.getByRole('article', { name: `${name} 3`, exact: true }).getByRole('listitem')).toHaveCount(5)
   })
 }

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const evidenceDir = resolve('evidence/screenshots')
@@ -80,18 +80,18 @@ test('adds, reorders, reloads, and removes ordered exercise media on mobile', as
   expect(await storedImage.evaluate(async (image) => (
     await (await fetch((image as HTMLImageElement).src)).blob()
   ).type)).toBe('image/jpeg')
-  await picker.setInputFiles({ name: 'side.mp4', mimeType: 'video/mp4', buffer: Buffer.from('video') })
+  await picker.setInputFiles({ name: 'side.webm', mimeType: 'video/webm', buffer: await readFile(resolve('e2e/fixtures/owned-motion-vp8.webm')) })
   await expect(exercise.getByText('front.png')).toBeVisible()
-  await expect(exercise.getByText('side.mp4')).toBeVisible()
+  await expect(exercise.getByText('side.webm')).toBeVisible()
 
-  await exercise.getByRole('button', { name: 'Move side.mp4 up' }).click()
-  await expect(exercise.getByRole('listitem').first()).toHaveAttribute('aria-label', /side.mp4/)
+  await exercise.getByRole('button', { name: 'Move side.webm up' }).click()
+  await expect(exercise.getByRole('listitem').first()).toHaveAttribute('aria-label', /side.webm/)
   await page.reload()
   await page.getByRole('tab', { name: 'Exercises' }).click()
   const restored = page.getByRole('article', { name: 'Front Squat' })
-  await expect(restored.getByRole('listitem').first()).toHaveAttribute('aria-label', /side.mp4/)
-  await restored.getByRole('button', { name: 'Remove side.mp4' }).click()
-  await expect(restored.getByText('side.mp4')).toHaveCount(0)
+  await expect(restored.getByRole('listitem').first()).toHaveAttribute('aria-label', /side.webm/)
+  await restored.getByRole('button', { name: 'Remove side.webm' }).click()
+  await expect(restored.getByText('side.webm')).toHaveCount(0)
   await expect(restored.getByText('front.png')).toBeVisible()
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)

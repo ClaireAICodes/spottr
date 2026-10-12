@@ -25,11 +25,15 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
   await page.getByRole('button', { name: 'Save exercise' }).click()
   const exercise = page.getByRole('article', { name: 'Back Squat' })
   await exercise.getByLabel('Add image or video').setInputFiles({
-    name: 'form.mp4',
-    mimeType: 'video/mp4',
-    buffer: Buffer.from('form'),
+    name: 'form.webm',
+    mimeType: 'video/webm',
+    buffer: await readFile(resolve('e2e/fixtures/owned-motion-vp8.webm')),
   })
-  await expect(exercise.getByText('form.mp4')).toBeVisible()
+  await expect(exercise.getByText('form.webm')).toBeVisible()
+  const encodedBytes = Buffer.from(await exercise.locator('video').evaluate(async (video: HTMLVideoElement) =>
+    Array.from(new Uint8Array(await (await fetch(video.src)).arrayBuffer())),
+  ))
+  expect(encodedBytes.length).toBeGreaterThan(0)
 
   await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Add workout' }).click()
@@ -48,7 +52,7 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
   const settingsTab = page.getByRole('tab', { name: 'Settings' })
   await expect(settingsTab).toBeFocused()
   await expect(settingsTab).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByText('4 B used across 1 file')).toBeVisible()
+  await expect(page.getByText(`${(encodedBytes.length / 1024).toFixed(1)} KB used across 1 file`)).toBeVisible()
   await page.getByLabel('Weight unit').selectOption('lb')
   await page.getByLabel('Rest duration (seconds)').fill('120')
   await page.getByRole('button', { name: 'Save settings' }).click()
@@ -73,10 +77,10 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
       exercises: [{
         name: 'Back Squat',
         media: [{
-          name: 'form.mp4',
-          mimeType: 'video/mp4',
-          size: 4,
-          content: { encoding: 'base64', data: 'Zm9ybQ==' },
+          name: 'form.webm',
+          mimeType: expect.stringMatching(/^video\/webm/),
+          size: encodedBytes.length,
+          content: { encoding: 'base64', data: encodedBytes.toString('base64') },
         }],
       }],
       workouts: [{ name: 'Lower Strength' }],
@@ -109,6 +113,12 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
   await expect(page.getByRole('article', { name: 'North Gym' })).toBeVisible()
   await expect(page.getByRole('article', { name: 'Temporary Gym' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Back to home' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
+  await expect(exercise.locator('video')).toBeVisible()
+  const restoredBytes = Buffer.from(await exercise.locator('video').evaluate(async (video: HTMLVideoElement) =>
+    Array.from(new Uint8Array(await (await fetch(video.src)).arrayBuffer())),
+  ))
+  expect(restoredBytes).toEqual(encodedBytes)
   await page.getByRole('tab', { name: 'Settings' }).click()
 
   await backupInput.setInputFiles({ name: 'malformed.json', mimeType: 'application/json', buffer: Buffer.from('{}') })
