@@ -2,6 +2,11 @@ import { test, expect } from '@playwright/test'
 
 // Deployment contract: built project assets, origin-isolated caching, offline reload.
 test('project path has install assets and an isolated offline-ready shell', async ({ page, context, request }) => {
+  for (const path of ['/', '/index.html', '/sw.js', '/manifest.webmanifest', '/icons/spottr-192.png']) {
+    expect((await request.get(path)).status()).toBe(404)
+  }
+  const worker = await (await request.get('/spottr/sw.js')).text()
+  expect(worker).toMatch(/const RELEASE_ID = '[a-f0-9]{64}'/)
   await page.goto('/spottr/')
   await expect(page).toHaveTitle('Spottr')
   await expect(page.locator('html')).toHaveAttribute('data-offline-ready', 'true')

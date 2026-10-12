@@ -9,18 +9,18 @@ test.beforeAll(async () => {
 })
 
 test('caches the loaded app shell and restores it without a network connection', async ({ context, page }) => {
-  await page.goto('/')
+  await page.goto('/spottr/')
   await expect(page.locator('html')).toHaveAttribute('data-offline-ready', 'true')
 
   const shellResourcesAreCached = await page.evaluate(async () => {
-    const shellCache = await caches.open('spottr-shell-v2')
+    const shellCache = await caches.open((await caches.keys()).find(name => name.startsWith('spottr-shell-/spottr/-'))!)
     const resources = [
       window.location.href,
       ...[...document.querySelectorAll<HTMLScriptElement | HTMLLinkElement>('script[src], link[rel="stylesheet"]')]
         .map((element) => element instanceof HTMLScriptElement ? element.src : element.href),
-      '/index.html',
-      '/manifest.webmanifest',
-      '/icons/spottr-192.png',
+      '/spottr/index.html',
+      '/spottr/manifest.webmanifest',
+      '/spottr/icons/spottr-192.png',
     ]
     return (await Promise.all(resources.map((resource) => shellCache.match(resource)))).every(Boolean)
   })
@@ -33,7 +33,7 @@ test('caches the loaded app shell and restores it without a network connection',
 
 test('keeps accurate readiness after cached offline reload and completes a saved workout', async ({ context, page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await page.goto('/spottr/')
   await expect(page.locator('html')).toHaveAttribute('data-offline-ready', 'true')
 
   await page.getByRole('button', { name: 'Manage gyms' }).click()
@@ -99,12 +99,12 @@ test('reports a first-install failure instead of waiting indefinitely', async ({
     const serviceWorkerPrototype = Object.getPrototypeOf(navigator.serviceWorker) as ServiceWorkerContainer
     const nativeRegister = serviceWorkerPrototype.register
     serviceWorkerPrototype.register = function register(scriptURL, options) {
-      return nativeRegister.call(this, String(scriptURL) === '/sw.js' ? '/sw-failing-test.js' : scriptURL, options)
+      return nativeRegister.call(this, String(scriptURL) === '/spottr/sw.js' ? '/spottr/sw-failing-test.js' : scriptURL, options)
     }
   })
 
   try {
-    await page.goto('/')
+    await page.goto('/spottr/')
 
     await expect(page.locator('html')).toHaveAttribute('data-offline-state', 'error', { timeout: 11_000 })
     await page.getByRole('tab', { name: 'Settings' }).click()
@@ -117,22 +117,25 @@ test('reports a first-install failure instead of waiting indefinitely', async ({
   }
 })
 
-test('activates a complete replacement shell and removes only superseded Spottr caches', async ({ page }) => {
-  await page.goto('/')
+test('activates a complete replacement shell and removes only superseded Spottr caches', async ({ page, context }) => {
+  await page.goto('/spottr/')
   await expect(page.locator('html')).toHaveAttribute('data-offline-ready', 'true')
   const originalWorker = await readFile(resolve('dist/sw.js'), 'utf8')
-  const replacementWorker = originalWorker.replace('`${CACHE_PREFIX}v2`', '`${CACHE_PREFIX}v3`')
+  const replacementWorker = originalWorker.replace(/const RELEASE_ID = [^\n]+/, "const RELEASE_ID = 'replacement-test'") + '\n// next release\n'
   expect(replacementWorker).not.toBe(originalWorker)
   const replacementWorkerPath = resolve('dist/sw-update-test.js')
 
   try {
-    await page.evaluate(async () => {
-      await (await caches.open('spottr-shell-v1')).put('/superseded', new Response('old shell'))
-      await (await caches.open('unrelated-origin-data')).put('/preserve-me', new Response('unrelated'))
-    })
+    const activeCacheName = await page.evaluate(async () => (await caches.keys()).find(name => name.startsWith('spottr-shell-/spottr/-'))!)
+    await page.evaluate(async (name) => {
+      await (await caches.open(name)).put('/spottr/index.html', new Response('active-shell-sentinel'))
+      await (await caches.open('spottr-shell-/sibling/-keep')).put('/sibling/', new Response('sibling'))
+      await (await caches.open('spottr-shell-/spottr/-superseded')).put('/spottr/superseded', new Response('old shell'))
+      await (await caches.open('unrelated-origin-data')).put('/spottr/preserve-me', new Response('unrelated'))
+    }, activeCacheName)
     await writeFile(replacementWorkerPath, replacementWorker)
     await page.evaluate(async () => {
-      await navigator.serviceWorker.register('/sw-update-test.js', { scope: '/' })
+      await navigator.serviceWorker.register('/spottr/sw-update-test.js', { scope: '/spottr/' })
     })
 
     await expect.poll(() => page.evaluate(async () => {
@@ -140,11 +143,12 @@ test('activates a complete replacement shell and removes only superseded Spottr 
       return registration?.waiting?.state
     })).toBe('installed')
 
+    expect(await page.evaluate(async name => (await (await caches.open(name)).match('/spottr/index.html'))?.text(), activeCacheName)).toBe('active-shell-sentinel')
     const replacementShellIsComplete = await page.evaluate(async () => {
-      const replacementCache = await caches.open('spottr-shell-v3')
+      const replacementCache = await caches.open('spottr-shell-/spottr/-replacement-test')
       const resources = [
-        '/',
-        '/index.html',
+        '/spottr/',
+        '/spottr/index.html',
         ...[...document.querySelectorAll<HTMLScriptElement | HTMLLinkElement>('script[src], link[href]')]
           .map((element) => element instanceof HTMLScriptElement ? element.src : element.href),
       ]
@@ -170,24 +174,28 @@ test('activates a complete replacement shell and removes only superseded Spottr 
     await expect.poll(() => page.evaluate(async () => (
       await navigator.serviceWorker.getRegistration()
     )?.active?.state)).toBe('activated')
-    await expect.poll(() => page.evaluate(() => caches.keys())).toEqual([
+    await expect.poll(() => page.evaluate(async () => (await caches.keys()).sort())).toEqual([
       'unrelated-origin-data',
-      'spottr-shell-v3',
-    ])
+      'spottr-shell-/sibling/-keep',
+      'spottr-shell-/spottr/-replacement-test',
+    ].sort())
+    await context.setOffline(true)
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Ready when you are.' })).toBeVisible()
   } finally {
     await rm(replacementWorkerPath, { force: true })
   }
 })
 
 test('reports app-shell cache failures without committing a partial batch', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/spottr/')
   const cacheResult = await page.evaluate(async () => {
-    const availableUrl = `${window.location.origin}/manifest.webmanifest?atomic-cache-test`
+    const availableUrl = `${window.location.origin}/spottr/manifest.webmanifest?atomic-cache-test`
     const unavailableUrl = 'http://127.0.0.1:1/missing-app-shell-resource.js'
     const registration = await navigator.serviceWorker.ready
     const worker = registration.active
     if (!worker) throw new Error('No active service worker')
-    const shellCache = await caches.open('spottr-shell-v2')
+    const shellCache = await caches.open((await caches.keys()).find(name => name.startsWith('spottr-shell-/spottr/-'))!)
     await shellCache.delete(availableUrl)
     const message = await new Promise<{ type: string; failedUrls: string[] }>((resolveResult, reject) => {
       const timeout = window.setTimeout(() => reject(new Error('Cache failure was not reported')), 2_000)
@@ -209,31 +217,31 @@ test('reports app-shell cache failures without committing a partial batch', asyn
 
 test('publishes an installable manifest and offers the browser install prompt', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  const manifestResponse = await request.get('/manifest.webmanifest')
+  const manifestResponse = await request.get('/spottr/manifest.webmanifest')
   expect(manifestResponse.ok()).toBe(true)
   expect(manifestResponse.headers()['content-type']).toContain('application/manifest+json')
   expect(await manifestResponse.json()).toEqual(expect.objectContaining({
     name: 'Spottr',
     short_name: 'Spottr',
-    start_url: '/',
-    scope: '/',
+    start_url: '/spottr/',
+    scope: '/spottr/',
     display: 'standalone',
     background_color: '#f4f0e8',
     theme_color: '#f4f0e8',
     icons: expect.arrayContaining([
-      expect.objectContaining({ src: '/icons/spottr-192.png', sizes: '192x192', type: 'image/png' }),
-      expect.objectContaining({ src: '/icons/spottr-512.png', sizes: '512x512', type: 'image/png' }),
+      expect.objectContaining({ src: '/spottr/icons/spottr-192.png', sizes: '192x192', type: 'image/png' }),
+      expect.objectContaining({ src: '/spottr/icons/spottr-512.png', sizes: '512x512', type: 'image/png' }),
     ]),
   }))
 
-  await page.goto('/')
-  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', '/manifest.webmanifest')
+  await page.goto('/spottr/')
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', '/spottr/manifest.webmanifest')
   await page.evaluate(() => navigator.serviceWorker.ready)
   const devtools = await page.context().newCDPSession(page)
   const { installabilityErrors } = await devtools.send('Page.getInstallabilityErrors')
   expect(installabilityErrors).toEqual([])
   const iconSizes = await page.evaluate(async () => Promise.all(
-    ['/icons/spottr-192.png', '/icons/spottr-512.png'].map((src) => new Promise<string>((resolveSize, reject) => {
+    ['/spottr/icons/spottr-192.png', '/spottr/icons/spottr-512.png'].map((src) => new Promise<string>((resolveSize, reject) => {
       const image = new Image()
       image.onload = () => resolveSize(`${image.naturalWidth}x${image.naturalHeight}`)
       image.onerror = () => reject(new Error(`Could not load ${src}`))
@@ -270,7 +278,7 @@ test('publishes an installable manifest and offers the browser install prompt', 
 })
 
 test('explains install failures without leaving an unhandled prompt rejection', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/spottr/')
   await page.evaluate(() => {
     const installEvent = new Event('beforeinstallprompt', { cancelable: true })
     Object.defineProperties(installEvent, {
@@ -304,7 +312,7 @@ test('recognizes Spottr when it is already running as an installed app', async (
         : nativeMatchMedia(query),
     })
   })
-  await page.goto('/')
+  await page.goto('/spottr/')
   await page.getByRole('tab', { name: 'Settings' }).click()
 
   await expect(page.getByText('Spottr is installed on this device.')).toBeVisible()
@@ -320,7 +328,7 @@ test('gives iPhone users platform-aware installation and offline guidance', asyn
       value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',
     })
   })
-  await page.goto('/')
+  await page.goto('/spottr/')
   await expect(page.locator('html')).toHaveAttribute('data-offline-ready', 'true')
   await page.getByRole('tab', { name: 'Settings' }).click()
 
@@ -339,7 +347,7 @@ test('updates offline guidance when delayed shell preparation finishes', async (
       return nativeRegister.call(this, scriptURL, options)
     }
   })
-  await page.goto('/')
+  await page.goto('/spottr/')
   await page.getByRole('tab', { name: 'Settings' }).click()
 
   const installPanel = page.getByRole('region', { name: 'Install Spottr' })
@@ -355,7 +363,7 @@ test('gives Android users browser-specific installation guidance', async ({ page
       value: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36',
     })
   })
-  await page.goto('/')
+  await page.goto('/spottr/')
   await page.getByRole('tab', { name: 'Settings' }).click()
 
   await expect(page.getByRole('region', { name: 'Install Spottr' }))
@@ -363,7 +371,7 @@ test('gives Android users browser-specific installation guidance', async ({ page
 })
 
 test('gives desktop users address-bar installation guidance', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/spottr/')
   await page.getByRole('tab', { name: 'Settings' }).click()
 
   await expect(page.getByRole('region', { name: 'Install Spottr' }))

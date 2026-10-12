@@ -1,7 +1,8 @@
 const APP_BASE = new URL('./', self.location.href)
 const INDEX_URL = new URL('index.html', APP_BASE).href
 const CACHE_PREFIX = `spottr-shell-${APP_BASE.pathname}-`
-const CACHE_NAME = `${CACHE_PREFIX}v3`
+const RELEASE_ID = '__SPOTTR_RELEASE__'
+const CACHE_NAME = `${CACHE_PREFIX}${RELEASE_ID}`
 const inScope = (value) => {
   try {
     const url = new URL(value, APP_BASE)
@@ -11,7 +12,10 @@ const inScope = (value) => {
 const shellUrls = (html) => [...html.matchAll(/(?:src|href)="([^"]+)"/g)]
   .map(match => new URL(match[1], APP_BASE).href).filter(inScope)
 
-self.addEventListener('install', event => event.waitUntil(cacheAppShell()))
+self.addEventListener('install', event => event.waitUntil(cacheAppShell().catch(async error => {
+  await caches.delete(CACHE_NAME)
+  throw error
+})))
 async function cacheAppShell() {
   const cache = await caches.open(CACHE_NAME)
   const response = await fetch(INDEX_URL, { cache: 'reload' })
@@ -65,7 +69,7 @@ self.addEventListener('message', event => {
     let writtenCount = 0
     try {
       for (const [index, result] of results.entries()) {
-        await cache.put(urls[index], result.value)
+        await cache.put(urls[index], previousResponses[index] ?? result.value)
         writtenCount += 1
       }
     } catch {
@@ -83,9 +87,11 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET' || !inScope(event.request.url)) return
   event.respondWith(caches.open(CACHE_NAME).then(async cache => {
     if (event.request.mode === 'navigate') {
+      // Keep this generation coherent until the user safely activates its replacement.
+      const shell = await cache.match(INDEX_URL)
+      if (shell) return shell
       try {
         const response = await fetch(event.request)
-        if (response.ok) event.waitUntil(cache.put(event.request, response.clone()))
         return response
       } catch { return (await cache.match(INDEX_URL)) ?? Response.error() }
     }

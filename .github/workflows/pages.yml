@@ -25,7 +25,7 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npx playwright test e2e/project-path.spec.ts --reporter=line
+      - run: npx playwright test --config playwright.pwa.config.ts --reporter=line
       - uses: actions/upload-pages-artifact@v3
         with:
           path: spottr/dist
