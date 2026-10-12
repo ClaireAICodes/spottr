@@ -214,6 +214,9 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
               : exercise.name
             return (
             <article key={exercise.id} className="exercise-card" aria-label={context}>
+              {exercise.media.length > EXERCISE_MEDIA_MAX_COUNT && (
+                <p role="status" className="form-message error-copy">{exercise.media.length} saved media items exceed the five-item limit. All are kept for reference, export and reordering. Remove extras explicitly to reach five; remove another before adding new media.</p>
+              )}
               <div className="exercise-card-heading">
                 <div>
                   <p className="exercise-meta">{[exercise.muscleGroup, exercise.equipment].filter(Boolean).join(' · ') || 'Uncategorised'}</p>
@@ -227,9 +230,6 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
                   <strong>Form media</strong>
                   <span>Images compressed · videos up to 15 MB · 25 MB total</span>
                 </div>
-                {exercise.media.length > EXERCISE_MEDIA_MAX_COUNT && (
-                  <p role="status" className="form-message error-copy">{exercise.media.length} saved media items exceed the five-item limit. All are kept for reference, export and reordering. Remove extras explicitly to reach five; remove another before adding new media.</p>
-                )}
                 {exercise.media.length === EXERCISE_MEDIA_MAX_COUNT && (
                   <p className="form-message">Five media items saved. Remove one before adding another.</p>
                 )}

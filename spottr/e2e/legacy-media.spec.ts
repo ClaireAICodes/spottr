@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page, type Locator } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import type { SpottrBackup } from '../src/backup'
 
@@ -11,9 +11,32 @@ async function backup(page: Page): Promise<SpottrBackup> {
   return JSON.parse(await readFile(path, 'utf8'))
 }
 
-for (const width of [390, 834, 1440]) {
-  test(`legacy six remains readable/exportable/reorderable until explicit removal at ${width}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 844 })
+async function expectUnobstructed(target: Locator, text = false) {
+  await expect.poll(() => target.evaluate((element, inspectText) => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    const rects = inspectText ? [...range.getClientRects()] : [element.getBoundingClientRect()]
+    return rects.every(rect => rect.top >= 0 && rect.bottom <= innerHeight
+      && rect.left >= 0 && rect.right <= innerWidth && [0.1, 0.5, 0.9].every(fraction => {
+        const hit = document.elementFromPoint(rect.left + rect.width * fraction, rect.top + rect.height / 2)
+        return hit === element || element.contains(hit)
+      }))
+  }, text)).toBe(true)
+}
+
+async function wheelTo(page: Page, target: Locator, width: number, height: number) {
+  await page.mouse.move(width / 2, height / 2)
+  for (let step = 0; step < 30; step++) {
+    const bounds = await target.boundingBox()
+    if (bounds && bounds.y >= 0 && bounds.y + bounds.height < height - 100) return
+    await page.mouse.wheel(0, bounds && bounds.y < 0 ? -100 : 100)
+    await page.waitForTimeout(50)
+  }
+}
+
+for (const [width, height] of [[390, 844], [390, 667], [834, 844], [1440, 844]]) {
+  test(`legacy six remains readable/exportable/reorderable until explicit removal at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height })
     await page.goto('/')
     // Set up an inherited database, not an ingestion bypass or an assertion side channel.
     const original = await page.evaluate(async () => {
@@ -53,6 +76,15 @@ for (const width of [390, 834, 1440]) {
     let card = await library()
     await expect(card.getByLabel('Add image or video')).toBeDisabled()
     await expect(card.getByText(/6 saved media items.*five-item limit/i)).toBeVisible()
+    const warning = card.getByText(/6 saved media items.*five-item limit/i)
+    if (width === 390 && height === 844) await expectUnobstructed(warning, true)
+    await wheelTo(page, warning, width, height)
+    await expectUnobstructed(warning, true)
+    await page.screenshot({ path: `evidence/screenshots/w42-legacy-warning-${width}x${height}.png` })
+    for (const tab of await page.getByRole('tab').all()) {
+      if (width > 820) await wheelTo(page, tab, width, height)
+      await expectUnobstructed(tab)
+    }
     await expect(card.locator('img')).toHaveCount(6)
     for (const image of await card.locator('img').all()) {
       await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(16)
@@ -62,6 +94,10 @@ for (const width of [390, 834, 1440]) {
     expect(Object.fromEntries(first.entities.exercises[0].media.map(m => [m.id, m.content.data]))).toEqual(original)
     expect(new Set(Object.values(original)).size).toBe(6)
     card = await library()
+    const lastRemove = card.getByRole('button', { name: 'Remove owned-5.png — Legacy reference, media 6', exact: true })
+    await wheelTo(page, lastRemove, width, height)
+    await expectUnobstructed(lastRemove)
+    await expectUnobstructed(card.getByRole('button', { name: 'Move owned-5.png up — Legacy reference, media 6', exact: true }))
     await card.getByRole('button', { name: 'Move owned-5.png up — Legacy reference, media 6', exact: true }).click()
     await expect(card.getByRole('button', { name: 'Remove owned-5.png — Legacy reference, media 5', exact: true })).toBeEnabled()
     await page.reload()
