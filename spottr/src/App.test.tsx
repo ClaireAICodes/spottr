@@ -333,6 +333,7 @@ describe('exercise library journey', () => {
     const user = userEvent.setup({ applyAccept: false })
     const exerciseService = createExerciseService(createMemoryExerciseRepository(), {
       prepareImage: async (file) => file,
+      prepareVideo: async (file) => file,
     })
     await exerciseService.create({ name: 'Front Squat', muscleGroup: '', equipment: '', notes: '' })
     render(<App exerciseService={exerciseService} />)
@@ -354,6 +355,7 @@ describe('exercise library journey', () => {
     const user = userEvent.setup()
     const exerciseService = createExerciseService(createMemoryExerciseRepository(), {
       prepareImage: async (file) => file,
+      prepareVideo: async (file) => file,
     })
     await exerciseService.create({ name: 'Front Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: '' })
     render(<App exerciseService={exerciseService} />)

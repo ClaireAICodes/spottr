@@ -1,4 +1,5 @@
 import type { Exercise, ExerciseMedia, ExerciseRepository } from './exercises'
+import { EXERCISE_MEDIA_MAX_COUNT } from './exercises'
 
 const EXERCISE_DATABASE_VERSION = 1
 const EXERCISES_STORE = 'exercises'
@@ -102,6 +103,9 @@ export function createIndexedDbExerciseRepository(databaseName = 'spottr-v1-exer
             const exercises = request.result as Exercise[]
             const exercise = exercises.find(({ id }) => id === exerciseId)
             if (!exercise) throw new Error('Exercise not found')
+            if ((exercise.media ?? []).length >= EXERCISE_MEDIA_MAX_COUNT) {
+              throw new Error('An exercise can have at most five media items. Remove one before adding another.')
+            }
             const total = exercises.reduce(
               (sum, item) => sum + (item.media ?? []).reduce((mediaSum, entry) => mediaSum + entry.size, 0),
               0,

@@ -5,7 +5,7 @@ import { createExerciseService, createMemoryExerciseRepository } from './exercis
 
 it.each(['success', 'failure'] as const)('returns pending keyboard save focus when overlapping media ends in %s', async (outcome) => {
   const user = userEvent.setup()
-  const realService = createExerciseService(createMemoryExerciseRepository())
+  const realService = createExerciseService(createMemoryExerciseRepository(), { prepareVideo: async (file) => file })
   await realService.create({ name: 'Focus probe', muscleGroup: '', equipment: '', notes: '' })
   let releaseSave!: () => void
   let releaseMedia!: () => void

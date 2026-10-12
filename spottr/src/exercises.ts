@@ -1,3 +1,6 @@
+import { compressExerciseVideo } from './mediaPreparation'
+import type { MediaPreparationOptions } from './mediaPreparation'
+
 export type Exercise = {
   id: string
   name: string
@@ -26,6 +29,7 @@ export const EXERCISE_IMAGE_SOURCE_MAX_BYTES = 10 * 1024 * 1024
 export const EXERCISE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
 export const EXERCISE_MEDIA_TOTAL_BYTES = 25 * 1024 * 1024
 export const EXERCISE_IMAGE_MAX_PIXELS = 20_000_000
+export const EXERCISE_MEDIA_MAX_COUNT = 5
 
 export interface ExerciseRepository {
   list(): Promise<Exercise[]>
@@ -46,12 +50,14 @@ type ExerciseServiceOptions = {
   createId?: () => string
   now?: () => string
   prepareImage?: (file: File) => Promise<Blob>
+  prepareVideo?: (file: File, options: MediaPreparationOptions) => Promise<Blob>
 }
 
 export function createExerciseService(repository: ExerciseRepository, options: ExerciseServiceOptions = {}) {
   const createId = options.createId ?? (() => crypto.randomUUID())
   const now = options.now ?? (() => new Date().toISOString())
   const prepareImage = options.prepareImage ?? compressExerciseImage
+  const prepareVideo = options.prepareVideo ?? compressExerciseVideo
   let mutationQueue: Promise<void> = Promise.resolve()
 
   function mutate<T>(operation: () => Promise<T>) {
@@ -156,14 +162,19 @@ export function createExerciseService(repository: ExerciseRepository, options: E
       }
     },
 
-    async addMedia(exerciseId: string, file: File) {
+    async addMedia(exerciseId: string, file: File, preparation: MediaPreparationOptions = {}) {
       return mutate(async () => {
+        preparation.signal?.throwIfAborted()
         const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : null
         if (!kind) throw new Error('Choose an image or video file')
         if (kind === 'video' && file.size > EXERCISE_VIDEO_MAX_BYTES) {
           throw new Error('Video exceeds the 15 MB per-video limit')
         }
-        const blob = kind === 'image' ? await prepareImage(file) : file
+        const blob = kind === 'image' ? await prepareImage(file) : await prepareVideo(file, preparation)
+        preparation.signal?.throwIfAborted()
+        if (kind === 'video' && (!blob.size || blob.size > EXERCISE_VIDEO_MAX_BYTES)) {
+          throw new Error('Prepared video exceeds the 15 MB per-video limit or contains no bytes')
+        }
         if (kind === 'image' && blob.size > EXERCISE_IMAGE_MAX_BYTES) {
           throw new Error('Image could not be compressed below the 2 MB image limit')
         }
@@ -324,6 +335,9 @@ export function createMemoryExerciseRepository(initialExercises: Exercise[] = []
     async addMedia(exerciseId, media, totalLimit) {
       const exercise = exercises.get(exerciseId)
       if (!exercise) throw new Error('Exercise not found')
+      if ((exercise.media ?? []).length >= EXERCISE_MEDIA_MAX_COUNT) {
+        throw new Error('An exercise can have at most five media items. Remove one before adding another.')
+      }
       const total = [...exercises.values()].reduce(
         (sum, item) => sum + (item.media ?? []).reduce((mediaSum, entry) => mediaSum + entry.size, 0),
         0,

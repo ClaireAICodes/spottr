@@ -6,7 +6,7 @@ import { createExerciseService, createMemoryExerciseRepository } from './exercis
 it.each(['success', 'failure', 'departure', 'replacement', 'unmount'] as const)(
   'preserves the upload focus destination through %s', async (outcome) => {
     const user = userEvent.setup()
-    const realService = createExerciseService(createMemoryExerciseRepository())
+    const realService = createExerciseService(createMemoryExerciseRepository(), { prepareVideo: async (file) => file })
     await realService.create({ name: 'Upload row', muscleGroup: '', equipment: '', notes: '' })
     let release!: () => void
     const gate = new Promise<void>((resolve) => { release = resolve })

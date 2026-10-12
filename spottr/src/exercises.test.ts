@@ -147,6 +147,7 @@ describe('shared exercise library', () => {
       })(),
       now: () => '2026-09-22T13:15:00.000Z',
       prepareImage: async (file) => file,
+      prepareVideo: async (file) => file,
     })
     const exercise = await service.create({ name: 'Deadlift', muscleGroup: 'Back', equipment: 'Barbell', notes: '' })
     const image = await service.addMedia(exercise.id, new File(['image'], 'setup.png', { type: 'image/png' }))
@@ -162,6 +163,7 @@ describe('shared exercise library', () => {
   it('reports accurate media storage usage after additions and removals', async () => {
     const service = createExerciseService(createMemoryExerciseRepository(), {
       prepareImage: async (file) => file,
+      prepareVideo: async (file) => file,
     })
     const exercise = await service.create({ name: 'Deadlift', muscleGroup: '', equipment: '', notes: '' })
     const image = await service.addMedia(exercise.id, new File(['1234'], 'setup.png', { type: 'image/png' }))
@@ -274,6 +276,7 @@ describe('shared exercise library', () => {
         return () => `persistent-${++value}`
       })(),
       prepareImage: async (file) => file,
+      prepareVideo: async (file) => file,
     })
     const exercise = await firstService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
     await firstService.addMedia(exercise.id, new File(['first'], 'first.png', { type: 'image/png' }))
@@ -293,8 +296,8 @@ describe('shared exercise library', () => {
     const repository = createIndexedDbExerciseRepository(databaseName)
     const setup = createExerciseService(repository, { createId: () => 'exercise-id' })
     const exercise = await setup.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
-    const first = createExerciseService(repository, { createId: () => 'first-media' })
-    const second = createExerciseService(repository, { createId: () => 'second-media' })
+    const first = createExerciseService(repository, { createId: () => 'first-media', prepareVideo: async (file) => file })
+    const second = createExerciseService(repository, { createId: () => 'second-media', prepareVideo: async (file) => file })
     const video = () => new File([new Uint8Array(EXERCISE_VIDEO_MAX_BYTES)], 'rep.mp4', { type: 'video/mp4' })
 
     const results = await Promise.allSettled([

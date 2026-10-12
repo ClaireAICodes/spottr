@@ -5,7 +5,7 @@ import { createExerciseService, createMemoryExerciseRepository } from './exercis
 
 it('addresses repeated exercise and media names independently through public actions', async () => {
   const user = userEvent.setup()
-  const service = createExerciseService(createMemoryExerciseRepository())
+  const service = createExerciseService(createMemoryExerciseRepository(), { prepareVideo: async (file) => file })
   const first = await service.create({ name: 'Long repeated exercise name', muscleGroup: '', equipment: '', notes: 'First destination' })
   const second = await service.create({ name: 'Long repeated exercise name', muscleGroup: '', equipment: '', notes: 'Second destination' })
   for (const exercise of [first, second]) {
