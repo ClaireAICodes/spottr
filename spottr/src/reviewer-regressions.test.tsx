@@ -121,7 +121,7 @@ describe('reviewer regressions', () => {
     const settingsService = createSettingsService(createMemorySettingsRepository({ ...DEFAULT_SETTINGS, weightUnit: 'lb' }))
     render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} settingsService={settingsService} />)
 
-    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
     await user.click(within(await screen.findByRole('article', { name: 'Strength' })).getByRole('button', { name: /edit/i }))
     const weight = screen.getByLabelText('Set 1 weight (lb) — Squat, exercise 1')
     expect(weight).toHaveValue(44.1)

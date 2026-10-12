@@ -348,7 +348,7 @@ export function WorkoutPlanner({
   }, [pendingDelete, isSaving, status])
 
   return (
-    <section id="main-view" role="tabpanel" aria-labelledby="tab-plan" className="workout-planner">
+    <section id="main-view" role="tabpanel" aria-labelledby="tab-workouts" className="workout-planner">
       <div className="workout-planner-content" inert={pendingDelete ? true : undefined} aria-hidden={pendingDelete ? true : undefined}>
       <div className="section-heading workout-heading">
         <div>

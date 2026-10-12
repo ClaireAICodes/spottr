@@ -10,7 +10,7 @@ test('active exercise references decode local media after backup and offline res
   await page.getByLabel('Gym name').fill('Reference Gym')
   await page.getByRole('button', { name: 'Save gym' }).click()
   await page.getByRole('button', { name: 'Back to home' }).click()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill('Row')
   await page.getByLabel('Notes').fill('Brace torso. Set seat to position 3.')
@@ -48,7 +48,7 @@ test('active exercise references decode local media after backup and offline res
   await page.getByLabel('Exercise name').fill('Press')
   await page.getByLabel('Notes').fill('Keep wrists straight.')
   await page.getByRole('button', { name: 'Save exercise' }).click()
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Add workout' }).click()
   await page.getByLabel('Workout name').fill('Reference Workout')
   await page.getByRole('button', { name: 'Add Row' }).click()
@@ -98,7 +98,7 @@ test('active exercise references decode local media after backup and offline res
   await expect(open).toBeFocused()
   await page.getByLabel('Row set 1 weight').fill('47')
   await page.getByRole('button', { name: 'Exit workout' }).click()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await page.evaluate(() => {
     const original = IDBObjectStore.prototype.get
     IDBObjectStore.prototype.get = function (...args: Parameters<IDBObjectStore['get']>) {
@@ -120,7 +120,7 @@ test('active exercise references decode local media after backup and offline res
   await expect(open).toBeFocused()
   await expect(page.getByLabel('Row set 1 weight')).toHaveValue('47')
   await page.getByRole('button', { name: 'Exit workout' }).click()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await page.evaluate(() => {
     const original = IDBObjectStore.prototype.get
     let calls = 0
@@ -146,7 +146,7 @@ test('active exercise references decode local media after backup and offline res
   await expect(page.getByText('Keep wrists straight.', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Row set 1 weight')).toHaveValue('47')
   await page.getByRole('button', { name: 'Exit workout' }).click()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await expect(page.getByRole('article', { name: 'Row' }).getByText('setup.png', { exact: true })).toBeVisible()
   await expect(page.getByRole('article', { name: 'Row' }).getByText('form.webm', { exact: true })).toBeVisible()
 })

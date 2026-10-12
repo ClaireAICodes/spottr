@@ -24,7 +24,7 @@ async function seed(page: Page, name: string, weight: string, rest: string) {
   await page.getByLabel('Address').fill(`${name} Road`)
   await page.getByRole('button', { name: 'Save gym', exact: true }).click()
   await expect(page.getByRole('article', { name: `${name} Gym`, exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: 'Train', exact: true }).click()
+  await page.getByRole('tab', { name: 'Exercises', exact: true }).click()
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill(`${name} Row`)
   await page.getByLabel('Notes', { exact: true }).fill(`${name} setup notes`)
@@ -42,7 +42,7 @@ async function seed(page: Page, name: string, weight: string, rest: string) {
     name: `${name}.png`, mimeType: 'image/png', buffer: Buffer.from(png, 'base64'),
   })
   await expect(exercise.getByText(`${name}.png`, { exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: 'Plan', exact: true }).click()
+  await page.getByRole('tab', { name: 'Workouts', exact: true }).click()
   await page.getByRole('button', { name: 'Add workout', exact: true }).click()
   await page.getByLabel('Workout name').fill(`${name} Strength`)
   await page.getByRole('button', { name: `Add ${name} Row`, exact: true }).click()

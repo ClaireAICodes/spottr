@@ -18,7 +18,7 @@ test('creates, searches, edits, and restores an exercise on mobile while offline
     return Promise.all(resources.map(async (resource) => Boolean(await caches.match(resource))))
   })).not.toContain(false)
 
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill('Goblet Squat')
   await page.getByLabel('Muscle group').fill('Legs')
@@ -36,7 +36,7 @@ test('creates, searches, edits, and restores an exercise on mobile while offline
 
   await context.setOffline(true)
   await page.reload()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await expect(page.getByRole('article', { name: 'Double Kettlebell Squat' })).toBeVisible()
 
   const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
@@ -47,7 +47,7 @@ test('creates, searches, edits, and restores an exercise on mobile while offline
 test('adds, reorders, reloads, and removes ordered exercise media on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/')
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill('Front Squat')
   await page.getByRole('button', { name: 'Save exercise' }).click()
@@ -87,7 +87,7 @@ test('adds, reorders, reloads, and removes ordered exercise media on mobile', as
   await exercise.getByRole('button', { name: 'Move side.mp4 up' }).click()
   await expect(exercise.getByRole('listitem').first()).toHaveAttribute('aria-label', /side.mp4/)
   await page.reload()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   const restored = page.getByRole('article', { name: 'Front Squat' })
   await expect(restored.getByRole('listitem').first()).toHaveAttribute('aria-label', /side.mp4/)
   await restored.getByRole('button', { name: 'Remove side.mp4' }).click()

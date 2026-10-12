@@ -31,12 +31,12 @@ async function setup(page: Page) {
     await page.getByRole('button', { name: 'Save gym', exact: true }).click()
     await expect(page.getByRole('article', { name, exact: true })).toBeVisible()
   }
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill('Row')
   await page.getByRole('button', { name: 'Save exercise' }).click()
   await expect(page.getByRole('button', { name: 'Edit Row', exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Add workout' }).click()
   await page.getByLabel('Workout name').fill('Strength')
   await page.getByRole('combobox', { name: 'Gym', exact: true }).selectOption({ label: 'North Gym' })
@@ -161,7 +161,7 @@ for (const [index, op] of operations.entries()) {
       await expect(page.getByLabel('Set 1 weight')).toHaveValue('42')
       await expect(page.getByRole('button', { name: 'Add Row variation', exact: true })).toHaveCount(1)
       await expect(page.getByRole('button', { name: 'Add Row', exact: true })).toHaveCount(1)
-      await page.getByRole('tab', { name: 'Train' }).click()
+      await page.getByRole('tab', { name: 'Exercises' }).click()
       await expect(page.getByRole('article')).toHaveCount(2)
       await expect(page.getByRole('button', { name: 'Edit Row', exact: true })).toBeVisible()
       return
@@ -205,8 +205,8 @@ for (const [index, op] of operations.entries()) {
         await verify(page, op, !abort)
         return
       }
-      await page.getByRole('tab', { name: 'Train' }).click()
-      await expect(page.getByRole('tab', { name: 'Train' })).toHaveAttribute('aria-selected', 'true')
+      await page.getByRole('tab', { name: 'Exercises' }).click()
+      await expect(page.getByRole('tab', { name: 'Exercises' })).toHaveAttribute('aria-selected', 'true')
       await release(page, abort)
       await verify(page, op, !abort, false)
       await verify(page, op, !abort)

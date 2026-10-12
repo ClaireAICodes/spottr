@@ -33,8 +33,8 @@ import { createSettingsService, DEFAULT_SETTINGS, type AppSettings, type Setting
 
 const tabs = [
   { label: 'Home', icon: Home },
-  { label: 'Train', icon: Dumbbell },
-  { label: 'Plan', icon: CalendarDays },
+  { label: 'Exercises', icon: Dumbbell },
+  { label: 'Workouts', icon: CalendarDays },
   { label: 'History', icon: BarChart3 },
   { label: 'Settings', icon: SlidersHorizontal },
 ] as const
@@ -297,10 +297,9 @@ export function App({
       <main ref={mainView} id="main" className="main-canvas" tabIndex={-1}>
         {!isFocusedSession && <header className="topbar">
           <div>
-            <p className="eyebrow">Monday · September 21</p>
             <h1 tabIndex={-1}>{pageTitle}</h1>
           </div>
-          <button className="avatar-button" aria-label="Open profile"><span aria-hidden="true">P</span></button>
+
         </header>}
 
         {settingsSensitiveView && settingsStatus === 'loading' ? (

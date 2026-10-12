@@ -19,7 +19,7 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
   await page.getByRole('button', { name: 'Save gym' }).click()
   await page.getByRole('button', { name: 'Back to home' }).click()
 
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill('Back Squat')
   await page.getByRole('button', { name: 'Save exercise' }).click()
@@ -31,7 +31,7 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
   })
   await expect(exercise.getByText('form.mp4')).toBeVisible()
 
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Add workout' }).click()
   await page.getByLabel('Workout name').fill('Lower Strength')
   await page.getByRole('button', { name: 'Add Back Squat' }).click()
@@ -42,7 +42,7 @@ test('persists settings, shows storage, celebrates a seeded PR, and accepts its 
   await expect(savedWorkout).toBeEnabled()
   await expect(savedWorkout).toBeFocused()
 
-  const planTab = page.getByRole('tab', { name: 'Plan' })
+  const planTab = page.getByRole('tab', { name: 'Workouts' })
   await planTab.focus()
   await page.keyboard.press('End')
   const settingsTab = page.getByRole('tab', { name: 'Settings' })

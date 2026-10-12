@@ -29,11 +29,11 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 667 }
     await page.getByRole('button', { name: 'Add gym', exact: true }).click()
     await page.getByLabel('Gym name').fill('Northside Strength and Conditioning')
     await page.getByRole('button', { name: 'Save gym' }).click()
-    await page.getByRole('tab', { name: 'Train', exact: true }).click()
+    await page.getByRole('tab', { name: 'Exercises', exact: true }).click()
     await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
     await page.getByLabel('Exercise name').fill('Long populated exercise reference')
     await page.getByRole('button', { name: 'Save exercise', exact: true }).click()
-    await page.getByRole('tab', { name: 'Plan', exact: true }).click()
+    await page.getByRole('tab', { name: 'Workouts', exact: true }).click()
     await page.getByRole('button', { name: 'Add workout' }).click()
     const name = 'Northside repeated strength and conditioning workout'
     await page.getByLabel('Workout name').fill(name)
@@ -63,7 +63,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 667 }
   test(`library visible picker keyboard geometry ${viewport.width}x${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport)
     await page.goto('/')
-    await page.getByRole('tab', { name: 'Train', exact: true }).click()
+    await page.getByRole('tab', { name: 'Exercises', exact: true }).click()
     const name = 'Northside Strength and Conditioning Training Centre'
     for (let i = 0; i < 3; i++) {
       await page.getByRole('button', { name: 'Add exercise', exact: true }).click()

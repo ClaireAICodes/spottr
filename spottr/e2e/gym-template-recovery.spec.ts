@@ -46,14 +46,14 @@ async function gymSetup(page: Page) {
 
 async function templateSetup(page: Page) {
   await gymSetup(page)
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   for (const name of ['Row', 'Press']) {
     await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
     await page.getByLabel('Exercise name').fill(name)
     await page.getByRole('button', { name: 'Save exercise' }).click()
     await expect(page.getByRole('button', { name: `Edit ${name}`, exact: true })).toBeVisible()
   }
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Add workout' }).click()
   await page.getByLabel('Workout name').fill('Strength')
   await page.getByRole('button', { name: 'Add Row', exact: true }).click()
@@ -159,7 +159,7 @@ test('template save keeps reordered and removed draft after abort; retry commits
   await page.getByRole('button', { name: 'Save workout' }).click()
   await expect(page.getByRole('article', { name: 'Recovered Strength', exact: true })).toBeVisible()
   await page.reload()
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Edit Recovered Strength' }).click()
   await expect(page.getByRole('article', { name: /sets$/ }).first()).toHaveAttribute('aria-label', 'Press sets')
   await expect(page.getByRole('article', { name: 'Row sets' }).getByLabel('Set 1 weight')).toHaveValue('17')
@@ -186,7 +186,7 @@ for (const operation of ['duplicate', 'delete', 'variation'] as const) {
     if (operation === 'variation') await expect(page.getByRole('article', { name: 'Row sets' }).getByLabel('Set 1 weight')).toHaveValue('42')
     const persisted = await page.context().newPage()
     await persisted.goto('/')
-    await persisted.getByRole('tab', { name: 'Plan' }).click()
+    await persisted.getByRole('tab', { name: 'Workouts' }).click()
     await expect(persisted.getByRole('article', { name: 'Strength', exact: true })).toBeVisible()
     await expect(persisted.getByRole('article')).toHaveCount(1)
     await persisted.getByRole('button', { name: 'Edit Strength', exact: true }).click()
@@ -203,7 +203,7 @@ for (const operation of ['duplicate', 'delete', 'variation'] as const) {
       await expect(page.getByRole('region', { name: 'Edit Strength', exact: true })).toHaveCount(0)
     }
     await page.reload()
-    await page.getByRole('tab', { name: 'Plan' }).click()
+    await page.getByRole('tab', { name: 'Workouts' }).click()
     if (operation === 'duplicate') await expect(page.getByRole('article')).toHaveCount(2)
     else if (operation === 'delete') await expect(page.getByRole('article')).toHaveCount(0)
     else {
@@ -234,7 +234,7 @@ test('new template failure retains draft, retries; cancelled structural edits ne
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Edit Strength', exact: true })).toBeFocused()
   await page.reload()
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await expect(page.getByRole('article')).toHaveCount(2)
   await page.getByRole('button', { name: 'Edit Strength', exact: true }).click()
   await expect(page.getByRole('article', { name: /sets$/ }).first()).toHaveAttribute('aria-label', 'Row sets')
@@ -261,7 +261,7 @@ for (const screen of ['gym', 'template'] as const) {
       }
     }, screen === 'gym' ? 'gyms' : 'workouts')
     if (screen === 'gym') await page.getByRole('button', { name: 'Manage gyms' }).click()
-    else await page.getByRole('tab', { name: 'Plan' }).click()
+    else await page.getByRole('tab', { name: 'Workouts' }).click()
     await expect(page.getByRole('status')).toHaveText(screen === 'gym' ? 'Loading your gyms…' : 'Loading workouts…')
     await expect.poll(() => page.evaluate(() => typeof Reflect.get(window, 'failRead'))).toBe('function')
     await page.evaluate(() => Reflect.get(window, 'failRead')())

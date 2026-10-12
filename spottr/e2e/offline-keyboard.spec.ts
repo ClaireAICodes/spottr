@@ -41,7 +41,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 667 }
     async function section(name: string) {
       await tabTo(page.getByRole('tab', { selected: true }))
       await page.keyboard.press('Home')
-      const names = ['Home', 'Train', 'Plan', 'History', 'Settings']
+      const names = ['Home', 'Exercises', 'Workouts', 'History', 'Settings']
       for (let i = 0; i < names.indexOf(name); i++) await page.keyboard.press(viewport.width >= 768 ? 'ArrowDown' : 'ArrowRight')
       await expect(page.getByRole('tab', { name, exact: true })).toBeFocused()
       await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true')

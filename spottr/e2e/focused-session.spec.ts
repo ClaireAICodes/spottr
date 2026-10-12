@@ -8,13 +8,13 @@ test('focused workout exits by keyboard and resumes saved progress with unobscur
   await page.getByLabel('Gym name').fill('Focus Gym')
   await page.getByRole('button', { name: 'Save gym' }).click()
   await page.getByRole('button', { name: 'Back to home' }).click()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   for (const name of ['Row', 'Press']) {
     await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
     await page.getByLabel('Exercise name').fill(name)
     await page.getByRole('button', { name: 'Save exercise' }).click()
   }
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Add workout' }).click()
   await page.getByLabel('Workout name').fill('Focused Strength')
   await page.getByRole('button', { name: 'Add Row', exact: true }).click()

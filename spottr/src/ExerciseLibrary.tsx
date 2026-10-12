@@ -176,7 +176,7 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
   }
 
   return (
-    <section id="main-view" role="tabpanel" aria-labelledby="tab-train" className="exercise-library">
+    <section id="main-view" role="tabpanel" aria-labelledby="tab-exercises" className="exercise-library">
       <div className="section-heading exercise-heading">
         <div>
           <p className="eyebrow">Shared library</p>

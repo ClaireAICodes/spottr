@@ -8,7 +8,7 @@ const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
 test('owned video upload persists encoded bytes through reload and public backup export', async ({ page }, info) => {
   await page.goto('./')
-  await page.getByRole('tab', { name: 'Train', exact: true }).click()
+  await page.getByRole('tab', { name: 'Exercises', exact: true }).click()
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill('Retained video acceptance')
   await page.getByRole('button', { name: 'Save exercise' }).click()
@@ -57,7 +57,7 @@ test('owned video upload persists encoded bytes through reload and public backup
   expect(before.size).toBe(encoded.length)
   expect(hash(Buffer.from(before.content.data, 'base64'))).toBe(hash(encoded))
   await page.reload()
-  await page.getByRole('tab', { name: 'Train', exact: true }).click()
+  await page.getByRole('tab', { name: 'Exercises', exact: true }).click()
   await expect(video).toBeVisible()
   const reloaded = await preview()
   expect(reloaded.data.length).toBe(encoded.length)

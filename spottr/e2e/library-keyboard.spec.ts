@@ -62,7 +62,7 @@ for (const order of ['creation', 'reverse'] as const) {
     await expect(articles.filter({ has: page.getByText('First destination', { exact: true }) }).getByRole('listitem')).toHaveCount(0)
     await page.screenshot({ path: test.info().outputPath(`library-${order}-media-mobile.png`) })
     await page.reload()
-    await page.getByRole('tab', { name: 'Train', exact: true }).click()
+    await page.getByRole('tab', { name: 'Exercises', exact: true }).click()
     await expect(second.getByRole('listitem')).toHaveCount(1)
   })
 }

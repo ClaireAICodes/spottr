@@ -12,14 +12,14 @@ async function foundations(page: Page) {
 }
 
 async function editor(page: Page) {
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   for (const name of ['Audit Row', 'Audit Press']) {
     await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
     await page.getByLabel('Exercise name').fill(name)
     await page.getByRole('button', { name: 'Save exercise' }).click()
     await expect(page.getByRole('button', { name: `Edit ${name}`, exact: true })).toBeVisible()
   }
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Add workout' }).click()
   await page.getByLabel('Workout name').fill('Audit Strength')
   await page.getByRole('combobox', { name: 'Gym', exact: true }).selectOption({ label: 'Audit North' })
@@ -61,7 +61,7 @@ test('planner repeated controls expose exercise and set context and retain saved
   await page.getByRole('button', { name: 'Save workout' }).click()
   await expect(page.getByRole('button', { name: 'Edit Audit Strength', exact: true })).toBeVisible()
   await page.reload()
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Edit Audit Strength', exact: true }).click()
   await expect(page.getByRole('spinbutton', { name: 'Set 1 weight (kg) — Audit Press, exercise 1', exact: true })).toHaveValue('17')
   await expect(page.getByRole('spinbutton', { name: 'Set 1 weight (kg) — Audit Row, exercise 2', exact: true })).toHaveValue('42')

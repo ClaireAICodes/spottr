@@ -19,14 +19,14 @@ test('builds, reloads, duplicates, and varies a mixed-set workout on mobile', as
     await page.getByRole('button', { name: 'Save gym' }).click()
   }
 
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   for (const name of ['Back Squat', 'Cable Row']) {
     await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
     await page.getByLabel('Exercise name').fill(name)
     await page.getByRole('button', { name: 'Save exercise' }).click()
   }
 
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   await page.getByRole('button', { name: 'Add workout' }).click()
   await page.getByLabel('Workout name').fill('Lower Strength')
   await page.getByRole('combobox', { name: 'Gym' }).selectOption({ label: 'North Gym' })
@@ -62,7 +62,7 @@ test('builds, reloads, duplicates, and varies a mixed-set workout on mobile', as
   await expect(page.getByRole('article', { name: 'Lower Strength' })).toContainText('2 exercises')
 
   await page.reload()
-  await page.getByRole('tab', { name: 'Plan' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
   const restored = page.getByRole('article', { name: 'Lower Strength' })
   await expect(restored).toBeVisible()
   await restored.getByRole('button', { name: 'Edit' }).click()

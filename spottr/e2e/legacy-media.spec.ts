@@ -70,7 +70,7 @@ for (const [width, height] of [[390, 844], [390, 667], [834, 844], [1440, 844]])
     })
     await page.reload()
     async function library() {
-      await page.getByRole('tab', { name: 'Train', exact: true }).click()
+      await page.getByRole('tab', { name: 'Exercises', exact: true }).click()
       return page.getByRole('article', { name: 'Legacy reference', exact: true })
     }
     let card = await library()

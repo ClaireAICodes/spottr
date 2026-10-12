@@ -11,7 +11,7 @@ test('cached-ready local image chooser and active reference use keyboard actions
   await page.getByRole('button', { name: 'Add gym', exact: true }).click()
   await page.getByLabel('Gym name').fill('Media Gym')
   await page.getByRole('button', { name: 'Save gym' }).click()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill('Media Row')
   await page.getByRole('button', { name: 'Save exercise' }).click()
@@ -41,7 +41,7 @@ test('cached-ready local image chooser and active reference use keyboard actions
   async function section(name: string) {
     await tabTo(page.getByRole('tab', { selected: true }))
     await page.keyboard.press('Home')
-    for (let i = 0; i < ['Home', 'Train', 'Plan', 'History', 'Settings'].indexOf(name); i++) await page.keyboard.press('ArrowRight')
+    for (let i = 0; i < ['Home', 'Exercises', 'Workouts', 'History', 'Settings'].indexOf(name); i++) await page.keyboard.press('ArrowRight')
     await expect(page.getByRole('tab', { name, exact: true })).toBeFocused()
   }
   await section('Train')

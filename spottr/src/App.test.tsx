@@ -20,8 +20,8 @@ describe('Spottr application shell', () => {
     expect(tabs).toHaveLength(5)
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       expect.stringContaining('Home'),
-      expect.stringContaining('Train'),
-      expect.stringContaining('Plan'),
+      expect.stringContaining('Exercises'),
+      expect.stringContaining('Workouts'),
       expect.stringContaining('History'),
       expect.stringContaining('Settings'),
     ])
@@ -36,11 +36,11 @@ describe('Spottr application shell', () => {
     await user.click(home)
     await user.keyboard('{ArrowRight}')
 
-    const train = screen.getByRole('tab', { name: /train/i })
+    const train = screen.getByRole('tab', { name: /exercises/i })
     expect(train).toHaveFocus()
     expect(train).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('heading', { level: 1, name: 'Train' })).toBeInTheDocument()
-    expect(screen.getByRole('tabpanel', { name: 'Train' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Exercises' })).toBeInTheDocument()
+    expect(screen.getByRole('tabpanel', { name: 'Exercises' })).toBeInTheDocument()
   })
 
   it('renders the empty start and resume states on Home', async () => {
@@ -317,7 +317,7 @@ describe('exercise library journey', () => {
     })
     await exerciseService.create({ name: 'Front Squat', muscleGroup: '', equipment: '', notes: '' })
     render(<App exerciseService={exerciseService} />)
-    await user.click(screen.getByRole('tab', { name: /train/i }))
+    await user.click(screen.getByRole('tab', { name: /exercises/i }))
     const exercise = await screen.findByRole('article', { name: 'Front Squat' })
 
     await user.upload(
@@ -337,7 +337,7 @@ describe('exercise library journey', () => {
     })
     await exerciseService.create({ name: 'Front Squat', muscleGroup: '', equipment: '', notes: '' })
     render(<App exerciseService={exerciseService} />)
-    await user.click(screen.getByRole('tab', { name: /train/i }))
+    await user.click(screen.getByRole('tab', { name: /exercises/i }))
     const exercise = await screen.findByRole('article', { name: 'Front Squat' })
 
     await user.upload(within(exercise).getByLabelText(/add image or video/i), [
@@ -359,7 +359,7 @@ describe('exercise library journey', () => {
     })
     await exerciseService.create({ name: 'Front Squat', muscleGroup: 'Legs', equipment: 'Barbell', notes: '' })
     render(<App exerciseService={exerciseService} />)
-    await user.click(screen.getByRole('tab', { name: /train/i }))
+    await user.click(screen.getByRole('tab', { name: /exercises/i }))
     const exercise = await screen.findByRole('article', { name: 'Front Squat' })
 
     await user.upload(within(exercise).getByLabelText(/add image or video/i), [
@@ -388,7 +388,7 @@ describe('exercise library journey', () => {
     const exerciseService = createExerciseService(createMemoryExerciseRepository())
     const firstRender = render(<App exerciseService={exerciseService} />)
 
-    await user.click(screen.getByRole('tab', { name: /train/i }))
+    await user.click(screen.getByRole('tab', { name: /exercises/i }))
     await user.click(await screen.findByRole('button', { name: /add exercise/i }))
     await user.type(screen.getByLabelText(/exercise name/i), 'Goblet Squat')
     await user.type(screen.getByLabelText(/muscle group/i), 'Legs')
@@ -408,7 +408,7 @@ describe('exercise library journey', () => {
 
     firstRender.unmount()
     render(<App exerciseService={exerciseService} />)
-    await user.click(screen.getByRole('tab', { name: /train/i }))
+    await user.click(screen.getByRole('tab', { name: /exercises/i }))
     expect(await screen.findByRole('article', { name: 'Double Kettlebell Squat' })).toBeInTheDocument()
   })
 
@@ -426,7 +426,7 @@ describe('exercise library journey', () => {
       },
     }
     render(<App exerciseService={service} />)
-    await user.click(screen.getByRole('tab', { name: /train/i }))
+    await user.click(screen.getByRole('tab', { name: /exercises/i }))
     const exercise = await screen.findByRole('article', { name: 'Goblet Squat' })
     await user.click(within(exercise).getByRole('button', { name: /edit/i }))
     const name = screen.getByLabelText(/exercise name/i)
@@ -454,7 +454,7 @@ describe('workout template journey', () => {
     const original = await workoutService.create({ name: 'Original', gymId: gym.id, exercises: [{ exerciseId: squat.id, sets: [{ kind: 'working', weight: 40, reps: 8 }] }] })
     const copy = await workoutService.duplicate(original.id, gym.id)
     render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
-    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
     await user.click(screen.getByRole('button', { name: /add workout/i }))
     await user.type(screen.getByRole('searchbox', { name: /search shared exercises/i }), 'row')
     expect(screen.getByRole('button', { name: /add cable row/i })).toBeInTheDocument()
@@ -555,7 +555,7 @@ describe('workout template journey', () => {
       create: async () => { throw new Error('Storage unavailable') },
     }
     render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
-    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
     await user.click(await screen.findByRole('button', { name: /add workout/i }))
     await user.type(screen.getByLabelText(/workout name/i), 'Keep this draft')
     await user.click(screen.getByRole('button', { name: /add squat/i }))
@@ -578,7 +578,7 @@ describe('workout template journey', () => {
     const workoutService = createWorkoutService(createMemoryWorkoutRepository())
     const firstRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
 
-    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
     await user.click(await screen.findByRole('button', { name: /add workout/i }))
     await user.type(screen.getByLabelText(/workout name/i), 'Lower Strength')
     await user.selectOptions(screen.getByLabelText('Gym'), north.id)
@@ -603,7 +603,7 @@ describe('workout template journey', () => {
 
     firstRender.unmount()
     const restoredRender = render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
-    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
     const restored = await screen.findByRole('article', { name: 'Lower Strength' })
     await user.click(within(restored).getByRole('button', { name: /edit/i }))
     expect(screen.getAllByRole('article', { name: /sets/i }).map((article) => article.getAttribute('aria-label'))).toEqual([
@@ -627,7 +627,7 @@ describe('workout template journey', () => {
     await exerciseService.update(backSquat.id, { ...backSquat, name: 'Back Squat Updated' })
     restoredRender.unmount()
     render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
-    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
 
     const propagatedOriginal = await screen.findByRole('article', { name: 'Lower Strength' })
     await user.click(within(propagatedOriginal).getByRole('button', { name: /edit/i }))
@@ -656,7 +656,7 @@ describe('workout template journey', () => {
     await exerciseService.update(exercise.id, { ...exercise, name: 'Barbell Press' })
 
     render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} />)
-    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
     await user.click(within(await screen.findByRole('article', { name: 'Push' })).getByRole('button', { name: /edit/i }))
 
     expect(screen.getByRole('article', { name: /barbell press sets/i })).toBeInTheDocument()
@@ -1141,7 +1141,7 @@ describe('active workout session journey', () => {
     expect(await screen.findByText(/1 of 1 sets logged/i)).toBeInTheDocument()
     expect((await workoutService.get(template.id))?.exercises[0].sets[0].weight).toBe(80)
     await user.click(screen.getByRole('button', { name: 'Exit workout' }))
-    await user.click(screen.getByRole('tab', { name: /plan/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
     await user.click(screen.getByRole('tab', { name: /home/i }))
     await user.click(screen.getByRole('button', { name: /resume lower strength/i }))
     expect(screen.getByRole('button', { name: /logged back squat set 1/i })).toBeDisabled()

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 
 test('owned WebM and MP4 fixtures are really resized, encoded, stored and playable; cancel/failure do not mutate', async ({ page }, testInfo) => {
   await page.goto('./')
-  await page.getByRole('tab', { name: 'Train', exact: true }).click()
+  await page.getByRole('tab', { name: 'Exercises', exact: true }).click()
   const result = await page.evaluate(async () => {
     const moduleUrl = '/spottr/src/exercises.ts'
     const { createExerciseService, createMemoryExerciseRepository } = await import(/* @vite-ignore */ moduleUrl)

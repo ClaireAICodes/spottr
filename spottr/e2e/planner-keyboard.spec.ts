@@ -8,7 +8,7 @@ test('public restore preserves keyboard focus with repeated set and overlapping 
   await page.getByRole('button', { name: 'Add gym', exact: true }).click()
   await page.getByLabel('Gym name').fill('North')
   await page.getByRole('button', { name: 'Save gym' }).click()
-  await page.getByRole('tab', { name: 'Train' }).click()
+  await page.getByRole('tab', { name: 'Exercises' }).click()
   for (const name of ['Row', 'Squat']) {
     await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
     await page.getByLabel('Exercise name').fill(name)
@@ -30,7 +30,7 @@ test('public restore preserves keyboard focus with repeated set and overlapping 
   await expect(page.getByRole('status').filter({ hasText: 'compatible and ready' })).toBeVisible()
   await page.getByRole('button', { name: 'Restore backup' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Backup restored' })).toBeVisible()
-  await page.getByRole('tab', { name: 'Plan', exact: true }).click()
+  await page.getByRole('tab', { name: 'Workouts', exact: true }).click()
   async function enter(name: string) {
     const target = page.getByRole('button', { name, exact: true })
     for (let i = 0; i < 90 && !await target.evaluate(node => node === document.activeElement); i++) await page.keyboard.press('Tab')
@@ -62,7 +62,7 @@ for (const width of [390, 834, 1440]) {
     await page.getByRole('button', { name: 'Add gym', exact: true }).click()
     await page.getByLabel('Gym name').fill('North')
     await page.getByRole('button', { name: 'Save gym' }).click()
-    await page.getByRole('tab', { name: 'Train' }).click()
+    await page.getByRole('tab', { name: 'Exercises' }).click()
     for (const name of ['Row', 'Squat']) {
       await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
       await page.getByLabel('Exercise name').fill(name)
@@ -81,7 +81,7 @@ for (const width of [390, 834, 1440]) {
       await tabTo(target)
       await page.keyboard.press('Enter')
     }
-    await tabTo(page.getByRole('tab', { name: 'Train' }))
+    await tabTo(page.getByRole('tab', { name: 'Exercises' }))
     await page.keyboard.press('ArrowRight')
     await enter('Add workout')
     await expect(page.getByLabel('Workout name')).toBeFocused()
