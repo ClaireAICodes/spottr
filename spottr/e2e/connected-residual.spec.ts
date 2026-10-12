@@ -49,7 +49,7 @@ const operations = ['gym create', 'gym update', 'gym select', 'gym delete', 'tem
 type Operation = typeof operations[number]
 const isGym = (op: Operation) => op.startsWith('gym')
 async function destination(page: Page, op: Operation) {
-  await page.getByRole('tab', { name: isGym(op) ? 'Home' : 'Plan' }).click()
+  await page.getByRole('tab', { name: isGym(op) ? 'Home' : 'Workouts' }).click()
   if (isGym(op)) await page.getByRole('button', { name: 'Manage gyms' }).click()
 }
 async function prepare(page: Page, op: Operation) {

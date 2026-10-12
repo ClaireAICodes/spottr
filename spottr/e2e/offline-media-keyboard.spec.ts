@@ -44,7 +44,7 @@ test('cached-ready local image chooser and active reference use keyboard actions
     for (let i = 0; i < ['Home', 'Exercises', 'Workouts', 'History', 'Settings'].indexOf(name); i++) await page.keyboard.press('ArrowRight')
     await expect(page.getByRole('tab', { name, exact: true })).toBeFocused()
   }
-  await section('Train')
+  await section('Exercises')
   const picker = page.getByLabel('Add image or video — Media Row', { exact: true })
   await tabTo(picker)
   await expect(picker).toBeFocused()
@@ -58,7 +58,7 @@ test('cached-ready local image chooser and active reference use keyboard actions
   await expect(picker).toBeFocused()
   await expect(page.locator('[aria-live="polite"]')).toHaveText('setup.png added to Media Row')
   await expect.poll(() => page.getByRole('article', { name: 'Media Row', exact: true }).locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(160)
-  await section('Plan')
+  await section('Workouts')
   await enter('Add workout')
   await expect(page.getByLabel('Workout name')).toBeFocused()
   await page.keyboard.type('Media Strength')

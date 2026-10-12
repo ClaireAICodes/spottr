@@ -47,7 +47,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 667 }
       await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true')
     }
 
-    await section('Train')
+    await section('Exercises')
     await enter('Add exercise')
     await expect(page.getByLabel('Exercise name')).toBeFocused()
     await page.keyboard.type('Offline Row')
@@ -60,10 +60,10 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 667 }
     await enter('Save changes')
     await expect(page.getByRole('button', { name: 'Edit Offline Row', exact: true })).toBeFocused()
     await page.reload()
-    await section('Train')
+    await section('Exercises')
     await expect(page.getByRole('article', { name: 'Offline Row', exact: true })).toContainText('Retained offline reference')
 
-    await section('Plan')
+    await section('Workouts')
     await enter('Add workout')
     await expect(page.getByLabel('Workout name')).toBeFocused()
     await page.keyboard.type('Offline Strength')
@@ -79,7 +79,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 390, height: 667 }
     await enter('Cancel')
     await expect(page.getByRole('button', { name: 'Edit Offline Strength', exact: true })).toBeFocused()
     await page.reload()
-    await section('Plan')
+    await section('Workouts')
     await enter('Edit Offline Strength')
     await expect(page.getByLabel('Workout name')).toHaveValue('Offline Strength')
     await expect(page.getByRole('spinbutton', { name: 'Set 1 weight (kg) — Offline Row, exercise 1', exact: true })).toHaveValue('40')
