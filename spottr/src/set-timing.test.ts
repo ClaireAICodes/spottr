@@ -1,6 +1,9 @@
 import { createExerciseService, createMemoryExerciseRepository } from './exercises'
 import { createWorkoutService, createMemoryWorkoutRepository } from './workouts'
 import { createMemorySessionRepository, createSessionService, elapsedSetSeconds } from './sessions'
+import { createSpottrBackup, parseSpottrBackup } from './backup'
+import { createGymService, createMemoryGymRepository } from './gyms'
+import { createSettingsService, createMemorySettingsRepository } from './settings'
 
 async function context() {
   const exercises = createExerciseService(createMemoryExerciseRepository())
@@ -17,6 +20,45 @@ async function context() {
 }
 
 describe('optional selected set timing', () => {
+  it('rejects invalid Log chronology without mutation and exports accepted data after clock recovery', async () => {
+    const c = await context()
+    await c.service.startSet(c.session.id, c.occurrence.id, c.set.id, { weight: 42.5, reps: 8 })
+    c.tick('2026-10-13T08:00:12.000Z')
+    await c.service.completeTimedSet(c.session.id, c.occurrence.id, c.set.id)
+    const saved = await c.service.getActive()
+    for (const clock of ['2026-10-13T08:00:05.000Z', '2026-10-13T07:59:59.000Z', 'invalid']) {
+      c.tick(clock)
+      await expect(c.service.logSet(c.occurrence.id, c.set.id, { weight: 43, reps: 7 }, undefined, c.session.id)).rejects.toThrow('Clock')
+      expect(await c.service.getActive()).toEqual(saved)
+    }
+    c.tick('2026-10-13T08:00:13.000Z')
+    const logged = await c.service.logSet(c.occurrence.id, c.set.id, { weight: 43, reps: 7 }, undefined, c.session.id)
+    expect(logged.exercises[0].sets[0].completedAt).toBe('2026-10-13T08:00:13.000Z')
+    const gyms = createGymService(createMemoryGymRepository(), { createId: () => 'gym' })
+    await gyms.create({ name: 'Timing gym', address: '' })
+    const backup = await createSpottrBackup({ gymService: gyms, exerciseService: c.exercises, workoutService: c.workouts, sessionService: c.service, settingsService: createSettingsService(createMemorySettingsRepository()) })
+    expect(parseSpottrBackup(JSON.stringify(backup)).entities.activeSession).toEqual(logged)
+  })
+
+  it('rejects stale Finish and reorder, then retries Finish on the displayed replacement without orphaned timing', async () => {
+    const c = await context()
+    await c.service.startSet(c.session.id, c.occurrence.id, c.set.id, { weight: 42.5, reps: 8 })
+    const running = (await c.service.getActive())!
+    await c.repository.replaceAll({ ...running, id: 'new-session', exercises: [...running.exercises, { ...running.exercises[0], id: 'second-occurrence' }] }, [])
+    const replacement = await c.service.getActive()
+    await expect(c.service.complete(c.session.id)).rejects.toThrow('Active session changed')
+    expect(await c.service.getActive()).toEqual(replacement)
+    expect(await c.service.listHistory()).toEqual([])
+    await expect(c.service.moveExercise(c.occurrence.id, 'down', c.session.id)).rejects.toThrow('Active session changed')
+    expect(await c.service.getActive()).toEqual(replacement)
+    c.tick('2026-10-13T08:00:12.000Z')
+    const completed = await c.service.complete('new-session')
+    expect(completed.id).toBe('new-session')
+    expect(completed.exercises.flatMap(exercise => exercise.sets).every(set => !set.timing && !set.completedAt && set.skippedAt === completed.endedAt)).toBe(true)
+    expect(await c.service.getActive()).toBeNull()
+    expect(await c.service.listHistory()).toEqual([completed])
+  })
+
   it('persists chosen targets through reload, completion and editable durable log without template mutation', async () => {
     const c = await context()
     await c.service.startSet(c.session.id, c.occurrence.id, c.set.id, { weight: 42.5, reps: 9 })

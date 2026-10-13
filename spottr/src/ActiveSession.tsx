@@ -258,7 +258,7 @@ export function ActiveSession({
     setPendingExerciseId(exerciseId)
     setError('')
     try {
-      const updated = await sessionService.moveExercise(exerciseId, direction)
+      const updated = await sessionService.moveExercise(exerciseId, direction, session.id)
       setSession(updated)
       onSessionChange(updated)
     } catch (caught) {
@@ -273,7 +273,7 @@ export function ActiveSession({
     setIsFinishing(true)
     setError('')
     try {
-      onComplete(await sessionService.complete())
+      onComplete(await sessionService.complete(session.id))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The workout could not be finished.')
       setIsConfirmingFinish(false)

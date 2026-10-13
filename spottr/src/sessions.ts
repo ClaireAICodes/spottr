@@ -338,6 +338,10 @@ export function createSessionService(
         const timestamp = now()
         const session = await repository.updateActive((current) => {
           if (current.id !== (expectedSessionId ?? active?.id)) throw new Error('Active session changed. Reload and resume.')
+          const timestampMs = Date.parse(timestamp)
+          if (!Number.isFinite(timestampMs) || timestampMs < Date.parse(current.startedAt)) {
+            throw new Error('Clock precedes session start or is invalid. Try again when the clock recovers.')
+          }
           let found = false
           const updated: WorkoutSession = {
             ...current,
@@ -357,6 +361,9 @@ export function createSessionService(
                     if (set.completedAt) throw new Error('Set already logged')
                     if (set.timing && !set.timing.endedAt) throw new Error('Complete the running set before logging actuals')
                     if (set.skippedAt) throw new Error('Return to the skipped set before logging it')
+                    if (set.timing && (timestampMs < Date.parse(set.timing.startedAt) || timestampMs < Date.parse(set.timing.endedAt!))) {
+                      throw new Error('Clock precedes set completion. Try again when the clock recovers.')
+                    }
                     return { ...set, ...actual, completedAt: timestamp, personalRecords }
                   }),
                 }
@@ -466,10 +473,11 @@ export function createSessionService(
       }))
     },
 
-    async moveExercise(sessionExerciseId: string, direction: 'up' | 'down') {
+    async moveExercise(sessionExerciseId: string, direction: 'up' | 'down', expectedSessionId?: string) {
       return mutate(async () => {
         const timestamp = now()
         const session = await repository.updateActive((current) => {
+          if (expectedSessionId !== undefined && current.id !== expectedSessionId) throw new Error('Active session changed. Reload and resume.')
           const currentIndex = current.exercises.findIndex(({ id }) => id === sessionExerciseId)
           if (currentIndex === -1) throw new Error('Session exercise not found')
           const nextIndex = currentIndex + (direction === 'up' ? -1 : 1)
@@ -484,7 +492,7 @@ export function createSessionService(
       })
     },
 
-    async complete() {
+    async complete(expectedSessionId?: string) {
       return mutate(async () => {
         const endedAt = now()
         const active = await repository.getActive()
@@ -492,7 +500,7 @@ export function createSessionService(
           ? await resolveGymName(active.gymId)
           : null
         if (!active) throw new Error('No active session')
-        const completed = await repository.completeActive(active.id, (current) => {
+        const completed = await repository.completeActive(expectedSessionId ?? active.id, (current) => {
           const exercises = current.exercises.map((exercise) => ({
             ...exercise,
             sets: exercise.sets.map((set) => set.completedAt
