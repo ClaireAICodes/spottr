@@ -1083,7 +1083,11 @@ describe('active workout session journey', () => {
     expect(screen.getByText('1 set completed')).toBeInTheDocument()
     expect(screen.getByText('1 set skipped')).toBeInTheDocument()
     expect(screen.getByText(/1 completed set earned a personal record/i)).toBeInTheDocument()
-    expect(screen.queryByText(/targets for next time/i)).not.toBeInTheDocument()
+    const offer = screen.getByRole('group', { name: 'Future target for Back Squat set 1' })
+    expect(offer).toHaveTextContent('Current target: 80 kg × 5 reps')
+    expect(screen.queryByRole('group', { name: 'Future target for Back Squat set 2' })).not.toBeInTheDocument()
+    await user.click(within(offer).getByRole('button', { name: 'Keep current target' }))
+    expect(await within(offer).findByText('Current target kept')).toHaveFocus()
     expect(await sessionService.getActive()).toBeNull()
 
     firstRender.unmount()

@@ -30,6 +30,33 @@ async function createTrainingContext() {
 }
 
 describe('active workout session service', () => {
+  it.each(['accept', 'decline'] as const)('records a PR-at-plan %s without changing the template or performance snapshot', async (decision) => {
+    const context = await createTrainingContext()
+    const repository = createMemorySessionRepository()
+    const updateTarget = vi.spyOn(context.workoutService, 'updateSetTarget')
+    const service = createSessionService(repository, context.workoutService, context.exerciseService, {
+      now: () => '2026-10-13T13:15:00.000Z',
+    })
+    const templateBefore = await context.workoutService.get(context.template.id)
+    const active = await service.start(context.template.id, context.gym.name)
+    const exercise = active.exercises[0]
+    const set = exercise.sets[0]
+    await service.logSet(exercise.id, set.id, { weight: set.targetWeight, reps: set.targetReps })
+    const completed = await service.complete(active.id)
+    expect(completed.exercises[0].sets[0].personalRecords).toEqual(['weight', 'set-volume'])
+    await expect(service.decideFutureTarget(completed.id, active.exercises[1].id, set.id, decision)).rejects.toThrow('Completed session set not found')
+    const decided = await service.decideFutureTarget(completed.id, exercise.id, set.id, decision)
+    expect(decided.exercises[0].sets[0].targetDecision).toBe(decision === 'accept' ? 'accepted' : 'declined')
+    const { targetDecision: _, ...performance } = decided.exercises[0].sets[0]
+    expect(performance).toEqual(completed.exercises[0].sets[0])
+    expect(decided.summary).toEqual(completed.summary)
+    expect(await service.decideFutureTarget(completed.id, exercise.id, set.id, decision)).toEqual(decided)
+    expect(await context.workoutService.get(context.template.id)).toEqual(templateBefore)
+    expect(updateTarget).not.toHaveBeenCalled()
+    const reloaded = createSessionService(repository, context.workoutService, context.exerciseService)
+    expect(await reloaded.getHistory(completed.id)).toEqual(decided)
+  })
+
   it('does not let an earlier session write survive a restore replacement', async () => {
     const context = await createTrainingContext()
     const repository = createMemorySessionRepository()

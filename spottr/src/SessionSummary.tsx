@@ -38,7 +38,7 @@ export function SessionSummary({
   const proposals = settings.progressiveOverloadCues
     ? current.exercises.flatMap((exercise) => exercise.sets
         .map((set, index) => ({ exercise, set, index }))
-        .filter(({ set }) => set.completedAt && (weightsDifferAtDisplayedPrecision(set.weight, set.targetWeight, settings.weightUnit) || set.reps !== set.targetReps)))
+        .filter(({ set }) => set.completedAt && (set.personalRecords?.length || weightsDifferAtDisplayedPrecision(set.weight, set.targetWeight, settings.weightUnit) || set.reps !== set.targetReps)))
     : []
 
   useEffect(() => {

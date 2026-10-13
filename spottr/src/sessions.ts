@@ -555,7 +555,9 @@ export function createSessionService(
         if (!exercise || !set?.completedAt) throw new Error('Completed session set not found')
         if (set.targetDecision === 'accepted' || set.targetDecision === 'declined') return cloneSession(completed)
         if (set.weight === set.targetWeight && set.reps === set.targetReps) {
-          throw new Error('This set already matches its future target')
+          if (!set.personalRecords?.length) throw new Error('This set already matches its future target')
+          // PR-at-plan records intent only, preserving even subsequently edited targets.
+          return cloneSession(await updateTargetDecision(sessionId, sessionExerciseId, setId, decision === 'accept' ? 'accepted' : 'declined'))
         }
         if (set.targetDecision === 'declining' && decision === 'accept') {
           throw new Error('This future target decline is still being finalized')
