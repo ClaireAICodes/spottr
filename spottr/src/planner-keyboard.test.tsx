@@ -24,7 +24,14 @@ it('keeps reorder and removal focus within the intended exercise when imported i
   await screen.findByRole('button', { name: 'Edit Collision' })
   async function enter(name: string) {
     const target = screen.getByRole('button', { name })
-    for (let i = 0; i < 90 && document.activeElement !== target; i++) await user.tab()
+    // Use Shift+Tab for earlier controls, avoiding a full editor wraparound.
+    // Focus is still obtained only through natural keyboard traversal.
+    for (let i = 0; i < 90 && document.activeElement !== target; i++) {
+      const active = document.activeElement
+      const shift = active !== document.body && !!active &&
+        Boolean(active.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING)
+      await user.tab({ shift })
+    }
     expect(target).toHaveFocus()
     await user.keyboard('{Enter}')
   }
@@ -60,7 +67,14 @@ it('keeps keyboard reorder and removal destinations live, saves associations and
   await screen.findByRole('button', { name: 'Edit Strength' })
   async function enter(name: string) {
     const target = screen.getByRole('button', { name })
-    for (let i = 0; i < 70 && document.activeElement !== target; i++) await user.tab()
+    // Use Shift+Tab for earlier controls, avoiding a full editor wraparound.
+    // Focus is still obtained only through natural keyboard traversal.
+    for (let i = 0; i < 70 && document.activeElement !== target; i++) {
+      const active = document.activeElement
+      const shift = active !== document.body && !!active &&
+        Boolean(active.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING)
+      await user.tab({ shift })
+    }
     expect(target).toHaveFocus()
     await user.keyboard('{Enter}')
   }
