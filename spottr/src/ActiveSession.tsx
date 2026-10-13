@@ -53,6 +53,11 @@ export function ActiveSession({
   const [pendingSetIds, setPendingSetIds] = useState<Set<string>>(() => new Set())
   const [pendingExerciseId, setPendingExerciseId] = useState<string | null>(null)
   const [restoreExerciseFocus, setRestoreExerciseFocus] = useState<string | null>(null)
+  const [restoreSetFocus, setRestoreSetFocus] = useState<{ target: HTMLButtonElement; owner: string; intent: number } | null>(null)
+  const availabilityOwner = useRef(initialSession.id)
+  availabilityOwner.current = initialSession.id
+  const availabilityMounted = useRef(false)
+  const focusIntent = useRef(0)
   const [isConfirmingFinish, setIsConfirmingFinish] = useState(false)
   const [isFinishing, setIsFinishing] = useState(false)
   const finishButton = useRef<HTMLButtonElement>(null)
@@ -72,6 +77,27 @@ export function ActiveSession({
   const remainingSets = allSets.length - completedSets
 
   useEffect(() => { sessionTitle.current?.focus() }, [])
+  useEffect(() => {
+    availabilityMounted.current = true
+    const changedIntent = () => { focusIntent.current += 1 }
+    document.addEventListener('focusin', changedIntent)
+    document.addEventListener('keydown', changedIntent)
+    document.addEventListener('pointerdown', changedIntent)
+    return () => {
+      availabilityMounted.current = false
+      document.removeEventListener('focusin', changedIntent)
+      document.removeEventListener('keydown', changedIntent)
+      document.removeEventListener('pointerdown', changedIntent)
+    }
+  }, [])
+  useEffect(() => {
+    if (!restoreSetFocus || pendingSetIds.size || pendingExerciseId !== null || isFinishing) return
+    const { target, owner, intent } = restoreSetFocus
+    // Disabled controls can lose focus to the body; never override newer navigation.
+    if (availabilityMounted.current && availabilityOwner.current === owner && focusIntent.current === intent && target.isConnected && !target.disabled
+      && (document.activeElement === document.body || document.activeElement === target)) target.focus()
+    setRestoreSetFocus(null)
+  }, [restoreSetFocus, pendingSetIds.size, pendingExerciseId, isFinishing])
   useEffect(() => {
     const update = () => setClock(Date.now())
     const interval = window.setInterval(update, 250)
@@ -212,22 +238,31 @@ export function ActiveSession({
   }
 
   async function changeSetAvailability(exerciseId: string, setId: string, skipped: boolean) {
+    const owner = session.id
+    const target = document.getElementById(`set-availability-${setKey(owner, setKey(exerciseId, setId))}`) as HTMLButtonElement | null
+    const restore = target && document.activeElement === target ? { target, owner, intent: focusIntent.current } : null
+    const stillOwned = () => availabilityMounted.current && availabilityOwner.current === owner
     setPendingSetIds((current) => new Set(current).add(setId))
     setError('')
     try {
       const updated = skipped
         ? await sessionService.returnSet(exerciseId, setId, session.id)
         : await sessionService.skipSet(exerciseId, setId, session.id)
+      if (!stillOwned()) return
       setSession(updated)
       onSessionChange(updated)
     } catch (caught) {
+      if (!stillOwned()) return
       setError(caught instanceof Error ? caught.message : 'The set could not be updated.')
     } finally {
-      setPendingSetIds((current) => {
-        const next = new Set(current)
-        next.delete(setId)
-        return next
-      })
+      if (stillOwned()) {
+        setRestoreSetFocus(restore)
+        setPendingSetIds((current) => {
+          const next = new Set(current)
+          next.delete(setId)
+          return next
+        })
+      }
     }
   }
 
@@ -359,7 +394,7 @@ export function ActiveSession({
                         <Check size={17} aria-hidden="true" /> {completed ? 'Logged' : skipped ? 'Skipped' : pending ? 'Updating…' : 'Log set'}
                       </button>
                       {!completed && (
-                        <button type="button" className="set-skip-button" disabled={pending} aria-label={`${skipped ? 'Return to' : 'Skip'} ${label}`} onClick={() => void changeSetAvailability(exercise.id, set.id, skipped)}>
+                        <button id={`set-availability-${setKey(session.id, key)}`} type="button" className="set-skip-button" disabled={pending} aria-label={`${skipped ? 'Return to' : 'Skip'} ${label}`} onClick={() => void changeSetAvailability(exercise.id, set.id, skipped)}>
                           {pending ? 'Updating…' : skipped ? 'Return to set' : 'Skip for now'}
                         </button>
                       )}
