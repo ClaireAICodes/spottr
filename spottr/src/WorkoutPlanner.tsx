@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Copy, Dumbbell, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { FormEvent } from 'react'
-import type { Exercise, ExerciseService } from './exercises'
+import type { Exercise, ExerciseDraft, ExerciseService } from './exercises'
 import type { Gym, GymService } from './gyms'
 import { ActionButton, Panel } from './primitives'
 import { displayWeight, storedWeight, type AppSettings } from './settings'
@@ -60,6 +60,10 @@ export function WorkoutPlanner({
   const editorControls = useRef(new Map<string, HTMLElement>())
   const pendingEditorFocus = useRef<string | null>(null)
   const [savedFocusId, setSavedFocusId] = useState<string | null>(null)
+  const [newExercise, setNewExercise] = useState<ExerciseDraft | null>(null)
+  const [exerciseError, setExerciseError] = useState('')
+  const [isCreating, setIsCreating] = useState(false)
+  const exerciseDialog = useRef<HTMLDivElement>(null)
 
   function controlRef(key: string) {
     return (node: HTMLElement | null) => {
@@ -69,13 +73,13 @@ export function WorkoutPlanner({
   }
 
   useEffect(() => {
-    if (!editor || isSaving || !pendingEditorFocus.current) return
+    if (!editor || isSaving || newExercise || !pendingEditorFocus.current) return
     const target = editorControls.current.get(pendingEditorFocus.current)
     if (target && !target.matches(':disabled')) {
       target.focus()
       pendingEditorFocus.current = null
     }
-  }, [editor, isSaving])
+  }, [editor, isSaving, newExercise])
 
   useEffect(() => {
     if (!savedFocusId || status !== 'ready' || isSaving) return
@@ -196,6 +200,57 @@ export function WorkoutPlanner({
       sets: [...exercise.sets, { id: draftId(), kind: 'working', weight: 0, reps: 8 }],
     })
   }
+
+  function cancelNewExercise() {
+    if (saveInFlight.current) return
+    pendingEditorFocus.current = 'create-exercise'
+    setNewExercise(null)
+    setExerciseError('')
+  }
+
+  async function saveNewExercise(event: FormEvent) {
+    event.preventDefault()
+    if (!newExercise || !editor || saveInFlight.current) return
+    saveInFlight.current = true
+    setIsCreating(true)
+    setExerciseError('')
+    try {
+      const created = await exerciseService.create(newExercise)
+      const entry = {
+        id: draftId(), exerciseId: created.id,
+        sets: [{ id: draftId(), kind: 'working' as const, weight: 0, reps: 8 }],
+      }
+      setExercises((items) => [...items, created].sort((left, right) => left.name.localeCompare(right.name)))
+      pendingEditorFocus.current = setControlKey(entry.id, entry.sets[0].id, 'type')
+      setEditor({ ...editor, exercises: [...editor.exercises, entry] })
+      setExerciseQuery('')
+      setNewExercise(null)
+    } catch (caught) {
+      setExerciseError(caught instanceof Error ? caught.message : 'The exercise could not be saved. Your workout draft is unchanged.')
+    } finally {
+      saveInFlight.current = false
+      setIsCreating(false)
+    }
+  }
+
+  function handleExerciseDialogKeyDown(event: React.KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      cancelNewExercise()
+    } else if (event.key === 'Tab') {
+      const controls = Array.from(exerciseDialog.current?.querySelectorAll<HTMLElement>('input:not(:disabled), textarea:not(:disabled), button:not(:disabled)') ?? [])
+      event.preventDefault()
+      if (!controls.length) { exerciseDialog.current?.focus(); return }
+      const index = controls.indexOf(document.activeElement as HTMLElement)
+      controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus()
+    }
+  }
+
+  useEffect(() => {
+    if (!newExercise) return
+    if (isCreating) exerciseDialog.current?.focus()
+    else if (!exerciseDialog.current?.contains(document.activeElement)) exerciseDialog.current?.querySelector<HTMLInputElement>('input')?.focus()
+  }, [newExercise, isCreating])
 
   function updateSet(exerciseIndex: number, setIndex: number, field: 'kind' | 'weight' | 'reps', value: string) {
     if (!editor) return
@@ -349,14 +404,14 @@ export function WorkoutPlanner({
 
   return (
     <section id="main-view" role="tabpanel" aria-labelledby="tab-workouts" className="workout-planner">
-      <div className="workout-planner-content" inert={pendingDelete ? true : undefined} aria-hidden={pendingDelete ? true : undefined}>
+      <div className="workout-planner-content" inert={pendingDelete || newExercise ? true : undefined} aria-hidden={pendingDelete || newExercise ? true : undefined}>
       <div className="section-heading workout-heading">
         <div>
           <p className="eyebrow">Gym-linked templates</p>
           <h2>Workouts</h2>
           <p>Build ordered workouts from shared exercises and independent set targets.</p>
         </div>
-        <ActionButton ref={addWorkoutButton} type="button" onClick={() => openEditor(null)} disabled={isSaving || gyms.length === 0 || exercises.length === 0}>
+        <ActionButton ref={addWorkoutButton} type="button" onClick={() => openEditor(null)} disabled={isSaving || status !== 'ready' || gyms.length === 0}>
           <Plus size={18} aria-hidden="true" /> Add workout
         </ActionButton>
       </div>
@@ -365,14 +420,14 @@ export function WorkoutPlanner({
       {isSaving && !pendingDelete && status !== 'loading' && <p role="status" className="form-message">{isVarying ? 'Creating exercise variation…' : duplicate ? 'Duplicating workout…' : 'Saving workout…'}</p>}
       {status === 'error' && <div role="alert" className="state-message error-state"><p>{error}</p><button type="button" className="text-button" onClick={() => void load()}>Try again</button></div>}
       {status === 'ready' && !editor && !duplicate && error && <p role="alert" className="form-message error-copy">{error}</p>}
-      {status === 'ready' && (gyms.length === 0 || exercises.length === 0) && (
+      {status === 'ready' && gyms.length === 0 && (
         <Panel className="workout-empty">
           <Dumbbell size={30} aria-hidden="true" />
           <h3>Set up your workout foundations</h3>
-          <p>Add at least one gym and one shared exercise before creating a workout.</p>
+          <p>Add at least one gym before creating a workout. You can create shared exercises while composing it.</p>
         </Panel>
       )}
-      {status === 'ready' && templates.length === 0 && gyms.length > 0 && exercises.length > 0 && !editor && (
+      {status === 'ready' && templates.length === 0 && gyms.length > 0 && !editor && (
         <Panel className="workout-empty">
           <Dumbbell size={30} aria-hidden="true" />
           <h3>No workouts yet</h3>
@@ -414,6 +469,7 @@ export function WorkoutPlanner({
 
             <div className="exercise-palette" aria-label="Add shared exercises">
               <strong>Shared exercises</strong>
+              <button ref={controlRef('create-exercise')} type="button" disabled={isSaving} onClick={() => { setExerciseError(''); setNewExercise({ name: '', muscleGroup: '', equipment: '', notes: '' }) }}>Create new exercise</button>
               <label>Search shared exercises<input ref={controlRef('search')} type="search" disabled={isSaving} value={exerciseQuery} onChange={(event) => setExerciseQuery(event.target.value)} placeholder="Name, muscle, equipment, or notes" /></label>
               <div>{exercises.filter((exercise) => {
                 const query = exerciseQuery.trim().toLocaleLowerCase()
@@ -462,6 +518,24 @@ export function WorkoutPlanner({
         </Panel>
       )}
       </div>
+
+      {newExercise && (
+        <div className="dialog-backdrop">
+          <div ref={exerciseDialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="planner-exercise-title" className="confirm-dialog" onKeyDown={handleExerciseDialogKeyDown}>
+            <h3 id="planner-exercise-title">Create a shared exercise</h3>
+            <p>Save adds this exercise to your library and your current workout draft.</p>
+            <form onSubmit={(event) => void saveNewExercise(event)}>
+              <label>Exercise name<input autoFocus required disabled={isCreating} value={newExercise.name} onChange={(event) => setNewExercise({ ...newExercise, name: event.target.value })} /></label>
+              <label>Muscle group<input disabled={isCreating} value={newExercise.muscleGroup} onChange={(event) => setNewExercise({ ...newExercise, muscleGroup: event.target.value })} /></label>
+              <label>Equipment<input disabled={isCreating} value={newExercise.equipment} onChange={(event) => setNewExercise({ ...newExercise, equipment: event.target.value })} /></label>
+              <label>Setup notes<textarea disabled={isCreating} value={newExercise.notes} onChange={(event) => setNewExercise({ ...newExercise, notes: event.target.value })} /></label>
+              {exerciseError && <p role="alert" className="form-message error-copy">{exerciseError}</p>}
+              {isCreating && <p role="status">Saving exercise…</p>}
+              <div className="form-actions"><button type="button" className="text-button" disabled={isCreating} onClick={cancelNewExercise}>Cancel exercise</button><ActionButton type="submit" disabled={isCreating}>{isCreating ? 'Saving…' : 'Save exercise'}</ActionButton></div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {pendingDelete && (
         <div className="dialog-backdrop">
