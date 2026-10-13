@@ -285,11 +285,11 @@ export function ExerciseLibrary({ service }: { service: ExerciseService }) {
                   <div>
                     <p role="status">{mediaProgress < 1 ? 'Preparing media…' : 'Saving prepared media…'}</p>
                     <progress aria-label={`Preparing media — ${context}`} max={1} value={mediaProgress} />
-                    {mediaProgress < 1 && <button type="button" onClick={() => {
+                    <button type="button" onClick={() => {
                       const picker = mediaPickerRefs.current.get(exercise.id)
                       uploadFocus.current = picker ? { exerciseId: exercise.id, picker } : null
                       mediaPreparation.current?.abort()
-                    }} aria-label={`Cancel media preparation — ${context}`}>Cancel preparation</button>}
+                    }} aria-label={`Cancel media preparation — ${context}`}>Cancel preparation</button>
                   </div>
                 )}
                 {mediaCancelledId === exercise.id && <p role="status">Media preparation cancelled. Previously saved media is unchanged.</p>}
