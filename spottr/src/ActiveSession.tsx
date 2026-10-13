@@ -4,6 +4,7 @@ import { ActionButton, Panel } from './primitives'
 import { ExerciseReference } from './ExerciseReference'
 import type { ExerciseService } from './exercises'
 import type { CompletedWorkoutSession, SessionService, WorkoutSession } from './sessions'
+import { elapsedSetSeconds } from './sessions'
 import { displayWeight, storedWeight, type AppSettings } from './settings'
 
 function elapsedRestSeconds(startedAt?: string) {
@@ -13,6 +14,10 @@ function elapsedRestSeconds(startedAt?: string) {
 function formatTimer(seconds: number) {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
+}
+
+function setKey(exerciseId: string, setId: string) {
+  return encodeURIComponent(JSON.stringify([exerciseId, setId]))
 }
 
 export function ActiveSession({
@@ -33,9 +38,15 @@ export function ActiveSession({
   settings: AppSettings
 }) {
   const [session, setSession] = useState(initialSession)
+  const [currentSetId, setCurrentSetId] = useState(() => {
+    const sets = initialSession.exercises.flatMap(exercise => exercise.sets.map(set => ({ ...set, key: setKey(exercise.id, set.id) })))
+    return (sets.find(set => set.timing && !set.completedAt && !set.skippedAt) ?? sets.find(set => !set.completedAt && !set.skippedAt))?.key
+  })
+  const [clock, setClock] = useState(Date.now)
+  const [timingFocus, setTimingFocus] = useState<string | null>(null)
   const [values, setValues] = useState(() => Object.fromEntries(
     initialSession.exercises.flatMap((exercise) => exercise.sets.map((set) => [
-      set.id,
+      setKey(exercise.id, set.id),
       { weight: String(Number(displayWeight(set.weight, settings.weightUnit).toFixed(1))), reps: String(set.reps) },
     ])),
   ))
@@ -61,6 +72,17 @@ export function ActiveSession({
   const remainingSets = allSets.length - completedSets
 
   useEffect(() => { sessionTitle.current?.focus() }, [])
+  useEffect(() => {
+    const update = () => setClock(Date.now())
+    const interval = window.setInterval(update, 250)
+    document.addEventListener('visibilitychange', update)
+    return () => { window.clearInterval(interval); document.removeEventListener('visibilitychange', update) }
+  }, [])
+  useEffect(() => {
+    if (!timingFocus || pendingSetIds.size) return
+    document.getElementById(timingFocus)?.focus()
+    setTimingFocus(null)
+  }, [timingFocus, pendingSetIds.size])
 
   useEffect(() => {
     if (isConfirmingFinish) keepTrainingButton.current?.focus()
@@ -130,7 +152,7 @@ export function ActiveSession({
   }
 
   async function logSet(exerciseId: string, setId: string) {
-    const draft = values[setId]
+    const draft = values[setKey(exerciseId, setId)]
     if (draft.weight.trim() === '') {
       setError('Enter a set weight')
       return
@@ -141,7 +163,7 @@ export function ActiveSession({
       const updated = await sessionService.logSet(exerciseId, setId, {
         weight: storedWeight(Number(draft.weight), settings.weightUnit),
         reps: Number(draft.reps),
-      }, settings.restTimerEnabled ? settings.restSeconds : undefined)
+      }, settings.restTimerEnabled ? settings.restSeconds : undefined, session.id)
       setSession(updated)
       onSessionChange(updated)
       const loggedSet = updated.exercises.flatMap(({ sets }) => sets).find(({ id }) => id === setId)
@@ -149,8 +171,13 @@ export function ActiveSession({
       if (settings.prCelebrations && loggedSet?.personalRecords?.includes('weight')) messages.push('New weight PR')
       if (settings.prCelebrations && loggedSet?.personalRecords?.includes('set-volume')) messages.push('New set volume PR')
       if (settings.restTimerEnabled) messages.push(`Suggested rest: ${settings.restSeconds} seconds`)
+      const occurrence = updated.exercises.find(exercise => exercise.id === exerciseId)!
+      messages.unshift(`Logged ${occurrence.name} set ${occurrence.sets.findIndex(set => set.id === setId) + 1}: ${draft.weight} ${settings.weightUnit}, ${draft.reps} reps`)
       const message = messages.join(' · ')
       setFeedback((current) => message ? { message, sequence: (current?.sequence ?? 0) + 1 } : null)
+      const next = updated.exercises.flatMap(exercise => exercise.sets.map(set => ({ ...set, key: setKey(exercise.id, set.id) }))).find(set => !set.completedAt && !set.skippedAt)
+      setCurrentSetId(next?.key)
+      setTimingFocus(updated.restTimer ? 'stop-session-rest' : next ? `actual-${next.key}` : 'finish-session-workout')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The set could not be logged.')
     } finally {
@@ -162,13 +189,35 @@ export function ActiveSession({
     }
   }
 
+  async function changeTiming(exerciseId: string, setId: string, running: boolean) {
+    const key = setKey(exerciseId, setId)
+    const draft = values[key]
+    if (!running && draft.weight.trim() === '') { setError('Enter a set weight'); return }
+    setPendingSetIds(current => new Set(current).add(setId))
+    setError('')
+    try {
+      const updated = running
+        ? await sessionService.completeTimedSet(session.id, exerciseId, setId)
+        : await sessionService.startSet(session.id, exerciseId, setId, { weight: storedWeight(Number(draft.weight), settings.weightUnit), reps: Number(draft.reps) })
+      setSession(updated)
+      onSessionChange(updated)
+      setTimingFocus(`${running ? 'actual' : 'timing'}-${key}`)
+      setFeedback(current => ({ message: running ? 'Set complete. Confirm actuals and log.' : 'Set started', sequence: (current?.sequence ?? 0) + 1 }))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Timing could not be saved. Try again.')
+      setTimingFocus(`timing-${key}`)
+    } finally {
+      setPendingSetIds(current => { const next = new Set(current); next.delete(setId); return next })
+    }
+  }
+
   async function changeSetAvailability(exerciseId: string, setId: string, skipped: boolean) {
     setPendingSetIds((current) => new Set(current).add(setId))
     setError('')
     try {
       const updated = skipped
-        ? await sessionService.returnSet(exerciseId, setId)
-        : await sessionService.skipSet(exerciseId, setId)
+        ? await sessionService.returnSet(exerciseId, setId, session.id)
+        : await sessionService.skipSet(exerciseId, setId, session.id)
       setSession(updated)
       onSessionChange(updated)
     } catch (caught) {
@@ -187,7 +236,7 @@ export function ActiveSession({
     setPendingExerciseId(exerciseId)
     setError('')
     try {
-      const updated = await sessionService.changeExerciseAvailability(exerciseId, skipped)
+      const updated = await sessionService.changeExerciseAvailability(exerciseId, skipped, session.id)
       setSession(updated)
       onSessionChange(updated)
       setFeedback((current) => ({ message: skipped ? 'Incomplete exercise sets skipped' : 'Incomplete exercise sets returned', sequence: (current?.sequence ?? 0) + 1 }))
@@ -254,7 +303,7 @@ export function ActiveSession({
             <strong role="timer" aria-label="Rest timer">{formatTimer(restSecondsElapsed)}</strong>
           </div>
           <p>Suggested rest: {Math.round((Date.parse(session.restTimer.endsAt) - Date.parse(session.restTimer.startedAt)) / 1000)} seconds. Keep resting as long as you need, even if you leave or reload.</p>
-          <ActionButton disabled={isStoppingRest || isFinishing} onClick={() => void stopRest()}>{isStoppingRest ? 'Stopping…' : 'Stop rest'}</ActionButton>
+          <ActionButton id="stop-session-rest" disabled={isStoppingRest || isFinishing} onClick={() => void stopRest()}>{isStoppingRest ? 'Stopping…' : 'Stop rest'}</ActionButton>
         </div>
       )}
       <div className="session-exercises">
@@ -285,17 +334,28 @@ export function ActiveSession({
             </ActionButton>
             <ol className="session-set-list">
               {exercise.sets.map((set, index) => {
-                const label = `${exercise.name} set ${index + 1}`
+                const label = `${exercise.name}${session.exercises.filter(item => item.name === exercise.name).length > 1 ? ` exercise ${exerciseIndex + 1}` : ''} set ${index + 1}`
+                const key = setKey(exercise.id, set.id)
                 const completed = Boolean(set.completedAt)
                 const skipped = Boolean(set.skippedAt)
                 const pending = pendingSetIds.has(set.id) || pendingExerciseId !== null || isFinishing
+                const running = Boolean(set.timing && !set.timing.endedAt)
+                const anyRunning = allSets.some(set => set.timing && !set.timing.endedAt)
+                const selected = currentSetId === key
                 return (
                   <li key={set.id} className={completed ? 'logged' : skipped ? 'skipped' : undefined}>
                     <span className="set-number">{index + 1}</span>
-                    <label>{label} weight ({settings.weightUnit})<input type="number" min="0" step="0.1" disabled={completed || skipped || pending} value={values[set.id].weight} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], weight: event.target.value } })} /></label>
-                    <label>{label} reps<input type="number" min="1" step="1" disabled={completed || skipped || pending} value={values[set.id].reps} onChange={(event) => setValues({ ...values, [set.id]: { ...values[set.id], reps: event.target.value } })} /></label>
+                    <label>{label} weight ({settings.weightUnit})<input id={`actual-${key}`} type="number" min="0" step="0.1" disabled={completed || skipped || pending || running} value={values[key].weight} onChange={(event) => setValues({ ...values, [key]: { ...values[key], weight: event.target.value } })} /></label>
+                    <label>{label} reps<input type="number" min="1" step="1" disabled={completed || skipped || pending || running} value={values[key].reps} onChange={(event) => setValues({ ...values, [key]: { ...values[key], reps: event.target.value } })} /></label>
                     <div className="session-set-actions">
-                      <button type="button" disabled={completed || skipped || pending} aria-label={`${completed ? 'Logged' : skipped ? 'Skipped' : 'Log'} ${label}`} onClick={() => void logSet(exercise.id, set.id)}>
+                      {!completed && !skipped && <>
+                        <button type="button" aria-pressed={selected} disabled={pending || anyRunning} aria-label={`Select current ${label}`} onClick={() => setCurrentSetId(key)}>{selected ? 'Current set' : 'Select set'}</button>
+                        {(selected || running) && !set.timing?.endedAt && <button id={`timing-${key}`} type="button" disabled={pending || (!running && anyRunning)} aria-label={`${running ? 'Complete' : 'Start'} ${label}`} onClick={() => void changeTiming(exercise.id, set.id, running)}>{running ? 'Complete set' : 'Start timed set'}</button>}
+                      </>}
+                      {set.timing && <span>{running ? <strong role="timer" aria-label={`Elapsed ${label}`}>{formatTimer(elapsedSetSeconds(set.timing.startedAt, clock))}</strong> : `Duration ${formatTimer(set.timing.durationSeconds ?? 0)}`}</span>}
+                      <span>{completed ? 'Logged' : skipped ? 'Skipped' : running ? 'Timing' : set.timing?.endedAt ? 'Awaiting actuals' : selected ? 'Current' : 'Remaining'}</span>
+                      <span>Planned: {Number(displayWeight(set.targetWeight, settings.weightUnit).toFixed(1))} {settings.weightUnit} × {set.targetReps}</span>
+                      <button type="button" disabled={completed || skipped || pending || running} aria-label={`${completed ? 'Logged' : skipped ? 'Skipped' : 'Log'} ${label}`} onClick={() => void logSet(exercise.id, set.id)}>
                         <Check size={17} aria-hidden="true" /> {completed ? 'Logged' : skipped ? 'Skipped' : pending ? 'Updating…' : 'Log set'}
                       </button>
                       {!completed && (
@@ -312,7 +372,7 @@ export function ActiveSession({
         ))}
       </div>
       <div className="finish-session">
-        <ActionButton ref={finishButton} disabled={pendingSetIds.size > 0 || pendingExerciseId !== null || isFinishing || isStoppingRest} onClick={() => remainingSets > 0 ? setIsConfirmingFinish(true) : void finish()}>
+        <ActionButton id="finish-session-workout" ref={finishButton} disabled={pendingSetIds.size > 0 || pendingExerciseId !== null || isFinishing || isStoppingRest} onClick={() => remainingSets > 0 ? setIsConfirmingFinish(true) : void finish()}>
           <Flag size={18} aria-hidden="true" /> Finish workout
         </ActionButton>
         <p>{remainingSets > 0 ? `${remainingSets} unfinished ${remainingSets === 1 ? 'set' : 'sets'} will be saved as skipped.` : 'Every planned set is logged.'}</p>

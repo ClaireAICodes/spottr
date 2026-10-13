@@ -11,6 +11,7 @@ export type SessionSet = {
   reps: number
   completedAt: string | null
   skippedAt: string | null
+  timing?: { startedAt: string; endedAt?: string; durationSeconds?: number }
   personalRecords?: Array<'weight' | 'set-volume'>
   targetDecision?: 'accepting' | 'declining' | 'accepted' | 'declined'
   targetDecisionPreviousTarget?: { weight: number; reps: number }
@@ -84,6 +85,7 @@ function cloneSession<T extends WorkoutSession>(session: T): T {
       ...exercise,
       sets: exercise.sets.map((set) => ({
         ...set,
+        timing: set.timing ? { ...set.timing } : undefined,
         personalRecords: set.personalRecords ? [...set.personalRecords] : undefined,
         targetDecisionPreviousTarget: set.targetDecisionPreviousTarget
           ? { ...set.targetDecisionPreviousTarget }
@@ -99,6 +101,15 @@ function cloneSession<T extends WorkoutSession>(session: T): T {
 }
 
 const futureTargetDecisionLockName = 'spottr-future-target-decision'
+export function elapsedSetSeconds(startedAt: string, nowMs: number) {
+  const elapsed = (nowMs - Date.parse(startedAt)) / 1000
+  return Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0
+}
+
+function clearSetTiming(set: SessionSet): SessionSet {
+  const { timing: _timing, ...remaining } = set
+  return remaining
+}
 let futureTargetDecisionQueue: Promise<void> = Promise.resolve()
 const sessionLogLockName = 'spottr-session-log'
 let sessionLogQueue: Promise<void> = Promise.resolve()
@@ -254,11 +265,46 @@ export function createSessionService(
       })
     },
 
+    async startSet(sessionId: string, exerciseId: string, setId: string, chosen: { weight: number; reps: number }) {
+      return mutate(() => withSessionLogLock(async () => {
+        if (!Number.isFinite(chosen.weight) || chosen.weight < 0 || !Number.isSafeInteger(chosen.reps) || chosen.reps <= 0) throw new Error('Enter a valid weight and positive whole reps')
+        const timestamp = now()
+        const updated = await repository.updateActive((current) => {
+          if (current.id !== sessionId) throw new Error('Active session changed. Reload and resume.')
+          const set = current.exercises.find(({ id }) => id === exerciseId)?.sets.find(({ id }) => id === setId)
+          if (!set || set.completedAt || set.skippedAt || set.timing) throw new Error('Set is not available to start')
+          if (current.exercises.some(exercise => exercise.sets.some(set => set.timing && !set.timing.endedAt))) throw new Error('Complete or skip the running set first')
+          if (!Number.isFinite(Date.parse(timestamp)) || Date.parse(timestamp) < Date.parse(current.startedAt)) throw new Error('Clock precedes session start')
+          return { ...current, updatedAt: timestamp, exercises: current.exercises.map(exercise => exercise.id !== exerciseId ? exercise : {
+            ...exercise, sets: exercise.sets.map(set => set.id !== setId ? set : { ...set, ...chosen, timing: { startedAt: timestamp } }),
+          }) }
+        })
+        return cloneSession(updated)
+      }))
+    },
+
+    async completeTimedSet(sessionId: string, exerciseId: string, setId: string) {
+      return mutate(() => withSessionLogLock(async () => {
+        const timestamp = now()
+        const updated = await repository.updateActive((current) => {
+          if (current.id !== sessionId) throw new Error('Active session changed. Reload and resume.')
+          const set = current.exercises.find(({ id }) => id === exerciseId)?.sets.find(({ id }) => id === setId)
+          if (!set?.timing || set.timing.endedAt || set.completedAt || set.skippedAt) throw new Error('Set is not running')
+          if (!Number.isFinite(Date.parse(timestamp)) || Date.parse(timestamp) < Date.parse(set.timing.startedAt)) throw new Error('Clock precedes set start. Try again when the clock recovers.')
+          return { ...current, updatedAt: timestamp, exercises: current.exercises.map(exercise => exercise.id !== exerciseId ? exercise : {
+            ...exercise, sets: exercise.sets.map(set => set.id !== setId ? set : { ...set, timing: { ...set.timing!, endedAt: timestamp, durationSeconds: elapsedSetSeconds(set.timing!.startedAt, Date.parse(timestamp)) } }),
+          }) }
+        })
+        return cloneSession(updated)
+      }))
+    },
+
     async logSet(
       sessionExerciseId: string,
       setId: string,
       actual: { weight: number; reps: number },
       restSeconds?: number,
+      expectedSessionId?: string,
     ) {
       return mutate(() => withSessionLogLock(async () => {
         if (!Number.isFinite(actual.weight) || actual.weight < 0) throw new Error('Set weight must be zero or greater')
@@ -291,6 +337,7 @@ export function createSessionService(
         }
         const timestamp = now()
         const session = await repository.updateActive((current) => {
+          if (current.id !== (expectedSessionId ?? active?.id)) throw new Error('Active session changed. Reload and resume.')
           let found = false
           const updated: WorkoutSession = {
             ...current,
@@ -308,6 +355,7 @@ export function createSessionService(
                     if (set.id !== setId) return set
                     found = true
                     if (set.completedAt) throw new Error('Set already logged')
+                    if (set.timing && !set.timing.endedAt) throw new Error('Complete the running set before logging actuals')
                     if (set.skippedAt) throw new Error('Return to the skipped set before logging it')
                     return { ...set, ...actual, completedAt: timestamp, personalRecords }
                   }),
@@ -336,7 +384,7 @@ export function createSessionService(
       }))
     },
 
-    async skipSet(sessionExerciseId: string, setId: string) {
+    async skipSet(sessionExerciseId: string, setId: string, expectedSessionId?: string) {
       return mutate(() => withSessionLogLock(async () => {
         const timestamp = now()
         const session = await repository.updateActive((current) => {
@@ -351,7 +399,8 @@ export function createSessionService(
                     if (set.id !== setId) return set
                     found = true
                     if (set.completedAt) throw new Error('Completed sets cannot be skipped')
-                    return set.skippedAt ? set : { ...set, skippedAt: timestamp }
+                    if (expectedSessionId !== undefined && current.id !== expectedSessionId) throw new Error('Active session changed. Reload and resume.')
+                    return set.skippedAt ? set : { ...clearSetTiming(set), skippedAt: timestamp }
                   }),
                 }
               : exercise),
@@ -363,7 +412,7 @@ export function createSessionService(
       }))
     },
 
-    async returnSet(sessionExerciseId: string, setId: string) {
+    async returnSet(sessionExerciseId: string, setId: string, expectedSessionId?: string) {
       return mutate(() => withSessionLogLock(async () => {
         const timestamp = now()
         const session = await repository.updateActive((current) => {
@@ -378,6 +427,7 @@ export function createSessionService(
                     if (set.id !== setId) return set
                     found = true
                     if (set.completedAt) throw new Error('Completed sets cannot be returned')
+                    if (expectedSessionId !== undefined && current.id !== expectedSessionId) throw new Error('Active session changed. Reload and resume.')
                     return set.skippedAt ? { ...set, skippedAt: null } : set
                   }),
                 }
@@ -390,13 +440,14 @@ export function createSessionService(
       }))
     },
 
-    async changeExerciseAvailability(sessionExerciseId: string, skipped: boolean) {
+    async changeExerciseAvailability(sessionExerciseId: string, skipped: boolean, expectedSessionId?: string) {
       return mutate(() => withSessionLogLock(async () => {
         const timestamp = now()
         const session = await repository.updateActive((current) => {
           if (!current.exercises.some(({ id }) => id === sessionExerciseId)) {
             throw new Error('Session exercise not found. Reload and resume before trying again.')
           }
+          if (expectedSessionId !== undefined && current.id !== expectedSessionId) throw new Error('Active session changed. Reload and resume.')
           return {
             ...current,
             updatedAt: timestamp,
@@ -404,7 +455,7 @@ export function createSessionService(
               ? {
                   ...exercise,
                   sets: exercise.sets.map((set) => set.completedAt ? set : {
-                    ...set,
+                    ...(skipped ? clearSetTiming(set) : set),
                     skippedAt: skipped ? set.skippedAt ?? timestamp : null,
                   }),
                 }
@@ -446,7 +497,7 @@ export function createSessionService(
             ...exercise,
             sets: exercise.sets.map((set) => set.completedAt
               ? { ...set, skippedAt: null }
-              : { ...set, skippedAt: endedAt }),
+              : { ...clearSetTiming(set), skippedAt: endedAt }),
           }))
           const sets = exercises.flatMap((exercise) => exercise.sets)
           const completedSets = sets.filter((set) => set.completedAt)

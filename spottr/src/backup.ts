@@ -186,6 +186,15 @@ function isSessionSet(value: unknown, start: string, end: string, completedSessi
   if (!isRecord(value)) return false
   const previousTarget = value.targetDecisionPreviousTarget
   const hasTargetDecision = value.targetDecision !== undefined
+  const timing = value.timing
+  if (timing !== undefined) {
+    if (!isRecord(timing) || !isTimestamp(timing.startedAt) || !isWithinSession(timing.startedAt, start, end) || value.skippedAt) return false
+    if (timing.endedAt === undefined) {
+      if (timing.durationSeconds !== undefined || value.completedAt || completedSession) return false
+    } else if (!isTimestamp(timing.endedAt) || !isWithinSession(timing.endedAt, timing.startedAt as string, end)
+      || timing.durationSeconds !== Math.floor((Date.parse(timing.endedAt as string) - Date.parse(timing.startedAt as string)) / 1000)
+      || (value.completedAt && !isChronological(timing.endedAt as string, value.completedAt as string))) return false
+  }
   return isNonBlankString(value.id)
     && (value.templateSetId === undefined || isNonBlankString(value.templateSetId))
     && (value.kind === 'warm-up' || value.kind === 'working' || value.kind === 'drop')
@@ -236,6 +245,8 @@ function isSession(value: unknown, completed: boolean) {
         return !pendingDecision || (isNonBlankString(exercise.templateExerciseId) && isNonBlankString(set.templateSetId))
       })))
     && new Set(exerciseIds).size === exerciseIds.length
+    && value.exercises.flatMap(exercise => (exercise as Record<string, unknown>).sets as Array<Record<string, unknown>>)
+      .filter(set => isRecord(set.timing) && set.timing.endedAt === undefined).length <= 1
   if (!baseValid || !completed) return baseValid
   if (!isTimestamp(value.endedAt)
     || !isChronological(value.startedAt, value.endedAt)
