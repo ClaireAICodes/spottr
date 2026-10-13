@@ -97,15 +97,26 @@ export function createIndexedDbExerciseRepository(databaseName = 'spottr-v1-exer
       store.put({ ...exercise, media: existing?.media ?? exercise.media })
       await transactionComplete(transaction)
     },
-    async addMedia(exerciseId, media, totalLimit) {
+    async addMedia(exerciseId, media, totalLimit, signal) {
+      signal?.throwIfAborted()
       const database = await openDatabase()
+      signal?.throwIfAborted()
       return new Promise<void>((resolve, reject) => {
         const transaction = database.transaction(EXERCISES_STORE, 'readwrite')
         const store = transaction.objectStore(EXERCISES_STORE)
         const request = store.getAll()
         let mutationError: Error | null = null
+        const cancel = () => {
+          // Abort only this uncommitted append, never compensate committed media.
+          try { transaction.abort() } catch (error) {
+            if (!(error instanceof DOMException) || error.name !== 'InvalidStateError') throw error
+          }
+        }
+        const cleanup = () => signal?.removeEventListener('abort', cancel)
+        signal?.addEventListener('abort', cancel, { once: true })
         request.onsuccess = () => {
           try {
+            signal?.throwIfAborted()
             const exercises = request.result as Exercise[]
             const exercise = exercises.find(({ id }) => id === exerciseId)
             if (!exercise) throw new Error('Exercise not found')
@@ -126,9 +137,9 @@ export function createIndexedDbExerciseRepository(databaseName = 'spottr-v1-exer
           }
         }
         request.onerror = () => reject(request.error ?? new Error('Local storage request failed'))
-        transaction.oncomplete = () => resolve()
-        transaction.onerror = () => reject(mutationError ?? transaction.error ?? new Error('Local storage transaction failed'))
-        transaction.onabort = () => reject(mutationError ?? transaction.error ?? new Error('Local storage transaction was cancelled'))
+        transaction.oncomplete = () => { cleanup(); resolve() }
+        transaction.onerror = () => { cleanup(); reject(mutationError ?? transaction.error ?? new Error('Local storage transaction failed')) }
+        transaction.onabort = () => { cleanup(); reject(mutationError ?? signal?.reason ?? transaction.error ?? new Error('Local storage transaction was cancelled')) }
       })
     },
     async moveMedia(exerciseId, mediaId, direction) {

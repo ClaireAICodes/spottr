@@ -41,7 +41,7 @@ export interface ExerciseRepository {
   list(): Promise<Exercise[]>
   get(id: string): Promise<Exercise | null>
   save(exercise: Exercise): Promise<void>
-  addMedia(exerciseId: string, media: ExerciseMedia, totalLimit: number): Promise<void>
+  addMedia(exerciseId: string, media: ExerciseMedia, totalLimit: number, signal?: AbortSignal): Promise<void>
   moveMedia(exerciseId: string, mediaId: string, direction: 'up' | 'down'): Promise<void>
   removeMedia(exerciseId: string, mediaId: string): Promise<void>
   replaceAll(exercises: Exercise[]): Promise<void>
@@ -195,7 +195,7 @@ export function createExerciseService(repository: ExerciseRepository, options: E
           blob,
           createdAt: now(),
         }
-        await repository.addMedia(exerciseId, media, EXERCISE_MEDIA_TOTAL_BYTES)
+        await repository.addMedia(exerciseId, media, EXERCISE_MEDIA_TOTAL_BYTES, preparation.signal)
         return media
       })
     },
@@ -353,7 +353,8 @@ export function createMemoryExerciseRepository(initialExercises: Exercise[] = []
       if (!current) assertExerciseMediaCount([exercise])
       exercises.set(exercise.id, cloneExercise({ ...exercise, media: current?.media ?? exercise.media }))
     },
-    async addMedia(exerciseId, media, totalLimit) {
+    async addMedia(exerciseId, media, totalLimit, signal) {
+      signal?.throwIfAborted()
       const exercise = exercises.get(exerciseId)
       if (!exercise) throw new Error('Exercise not found')
       if ((exercise.media ?? []).length >= EXERCISE_MEDIA_MAX_COUNT) {
