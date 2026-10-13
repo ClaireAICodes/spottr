@@ -1,5 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+
+const setupFixture = resolve('e2e/fixtures/owned-setup.png')
+const videoFixture = resolve('e2e/fixtures/owned-motion-vp8.webm')
 
 test('active exercise references decode local media after backup and offline resume without changing drafts', async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 })
@@ -15,35 +19,23 @@ test('active exercise references decode local media after backup and offline res
   await page.getByLabel('Exercise name').fill('Row')
   await page.getByLabel('Notes').fill('Brace torso. Set seat to position 3.')
   await page.getByRole('button', { name: 'Save exercise' }).click()
-  await page.getByRole('article', { name: 'Row' }).getByLabel('Add image or video').evaluate(async (input: HTMLInputElement) => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 160; canvas.height = 90
-    const ctx = canvas.getContext('2d')!
-    ctx.fillStyle = '#236abb'; ctx.fillRect(0, 0, 160, 90)
-    const image = await new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!), 'image/png'))
-    const stream = canvas.captureStream(10)
-    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' })
-    const chunks: Blob[] = []
-    recorder.ondataavailable = (event) => chunks.push(event.data)
-    const recorded = new Promise<Blob>((resolve) => { recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' })) })
-    recorder.start()
-    let frame = 0
-    const drawing = setInterval(() => {
-      ctx.fillStyle = frame++ % 2 ? '#236abb' : '#55a044'
-      ctx.fillRect(0, 0, 160, 90)
-    }, 50)
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    recorder.stop()
-    const video = await recorded
-    clearInterval(drawing)
-    stream.getTracks().forEach((track) => track.stop())
-    const transfer = new DataTransfer()
-    transfer.items.add(new File([image], 'setup.png', { type: 'image/png' }))
-    transfer.items.add(new File([video], 'form.webm', { type: 'video/webm' }))
-    input.files = transfer.files
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-  })
-  await expect(page.getByText('form.webm', { exact: true })).toBeVisible()
+  const exerciseCard = page.getByRole('article', { name: 'Row' })
+  const picker = exerciseCard.getByLabel('Add image or video — Row', { exact: true })
+
+  // Upload image fixture
+  await picker.setInputFiles({ name: 'setup.png', mimeType: 'image/png', buffer: await readFile(setupFixture) })
+  await expect(exerciseCard.getByText('setup.png')).toBeVisible()
+
+  // Upload video fixture - wait for media preparation to complete
+  const choosing = page.waitForEvent('filechooser')
+  await picker.focus()
+  await page.keyboard.press('Enter')
+  await (await choosing).setFiles({ name: 'form.webm', mimeType: 'video/webm', buffer: await readFile(videoFixture) })
+
+  const progress = exerciseCard.getByRole('progressbar', { name: 'Preparing media — Row', exact: true })
+  await expect(progress).toBeVisible()
+  await expect.poll(() => exerciseCard.getByText('form.webm', { exact: true }).count(), { timeout: 30000 }).toBe(1)
+
   await page.getByRole('button', { name: 'Add exercise', exact: true }).click()
   await page.getByLabel('Exercise name').fill('Press')
   await page.getByLabel('Notes').fill('Keep wrists straight.')
