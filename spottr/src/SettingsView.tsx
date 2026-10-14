@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Database, Download, Save, Upload } from 'lucide-react'
-import { createSpottrBackup, downloadSpottrBackup, MAX_BACKUP_FILE_BYTES, parseSpottrBackup, restoreSpottrBackup, serializeSpottrBackup, type SpottrBackup } from './backup'
+import { downloadSpottrBackup, MAX_BACKUP_FILE_BYTES, parseSpottrBackup, serializeSpottrBackup, type SpottrBackup } from './backup'
+import type { Dataset } from './datasetCoordinator'
 import type { ExerciseService } from './exercises'
-import type { GymService } from './gyms'
+
 import { InstallPanel, type InstallPromptState } from './InstallPanel'
 import { ActionButton, Panel } from './primitives'
-import type { SessionService } from './sessions'
+
 import { DEFAULT_SETTINGS, type AppSettings, type SettingsService } from './settings'
-import type { WorkoutService } from './workouts'
+
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -18,9 +19,7 @@ function formatBytes(bytes: number) {
 export function SettingsView({
   settingsService,
   exerciseService,
-  gymService,
-  workoutService,
-  sessionService,
+  backupOperations,
   onSettingsChange,
   onBackupRestored,
   onBackupRestoreStateChange,
@@ -28,9 +27,7 @@ export function SettingsView({
 }: {
   settingsService: SettingsService
   exerciseService: ExerciseService
-  gymService: GymService
-  workoutService: WorkoutService
-  sessionService: SessionService
+  backupOperations: Pick<Dataset, 'exportBackup' | 'restoreBackup'>
   onSettingsChange: (settings: AppSettings) => void
   onBackupRestored: (settings: AppSettings) => void
   onBackupRestoreStateChange: (restoring: boolean) => void
@@ -87,13 +84,7 @@ export function SettingsView({
     setBackupStatus('exporting')
     setBackupError('')
     try {
-      const backup = await createSpottrBackup({
-        gymService,
-        exerciseService,
-        workoutService,
-        sessionService,
-        settingsService,
-      })
+      const backup = await backupOperations.exportBackup()
       downloadSpottrBackup(serializeSpottrBackup(backup))
       setBackupStatus('downloaded')
     } catch (caught) {
@@ -130,7 +121,7 @@ export function SettingsView({
     setImportError('')
     onBackupRestoreStateChange(true)
     try {
-      await restoreSpottrBackup(validatedBackup, { gymService, exerciseService, workoutService, sessionService, settingsService })
+      await backupOperations.restoreBackup(validatedBackup)
       setSettings(validatedBackup.settings)
       setStatus('ready')
       onSettingsChange(validatedBackup.settings)

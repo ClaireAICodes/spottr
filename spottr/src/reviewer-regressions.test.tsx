@@ -225,10 +225,59 @@ describe('reviewer regressions', () => {
     await user.click(await screen.findByRole('button', { name: /resume strength/i }))
     expect(await screen.findByLabelText('Squat set 1 weight (kg)')).toHaveValue(20)
 
-    view.rerender(<App {...props} settingsService={replacement} />)
-    expect(screen.getByRole('status')).toHaveTextContent('Loading saved settings')
-    expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
-    resolveReplacement({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
-    expect(await screen.findByLabelText('Squat set 1 weight (lb)')).toHaveValue(44.1)
+    try {
+      view.rerender(<App {...props} settingsService={replacement} />)
+      expect(screen.getByRole('status')).toHaveTextContent('Loading saved settings')
+      expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
+      await waitFor(() => expect(typeof resolveReplacement).toBe('function'))
+      resolveReplacement({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
+      expect(await screen.findByLabelText('Squat set 1 weight (lb)')).toHaveValue(44.1)
+    } finally {
+      resolveReplacement?.({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
+    }
+  })
+
+  it('S1 replacement settings rejection exposes Retry and same-origin success without fallback units', async () => {
+    const exerciseService = createExerciseService(createMemoryExerciseRepository(), { createId: () => 's1-exercise' })
+    await exerciseService.create({ name: 'Squat', muscleGroup: '', equipment: '', notes: '' })
+    const workoutService = createWorkoutService(createMemoryWorkoutRepository())
+    const template = await workoutService.create({ name: 'Strength', gymId: 'gym-1', exercises: [{ exerciseId: 's1-exercise', sets: [{ kind: 'working', weight: 20, reps: 5 }] }] })
+    const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
+    await sessionService.start(template.id, 'Gym')
+    const props = { exerciseService, workoutService, sessionService }
+    const view = render(<App {...props} settingsService={createSettingsService(createMemorySettingsRepository(DEFAULT_SETTINGS))} />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /resume strength/i }))
+    expect(await screen.findByLabelText('Squat set 1 weight (kg)')).toHaveValue(20)
+    let rejectFirst: ((error: Error) => void) | undefined
+    let resolveRetry: ((settings: typeof DEFAULT_SETTINGS) => void) | undefined
+    let calls = 0
+    const replacement = {
+      get: () => { calls++; return new Promise<typeof DEFAULT_SETTINGS>((resolve, reject) => {
+        if (calls === 1) rejectFirst = reject
+        else resolveRetry = resolve
+      }) },
+      update: async (settings: typeof DEFAULT_SETTINGS) => settings,
+    }
+    try {
+      view.rerender(<App {...props} settingsService={replacement} />)
+      expect(screen.getByRole('status')).toHaveTextContent('Loading saved settings')
+      expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
+      await waitFor(() => expect(typeof rejectFirst).toBe('function'))
+      rejectFirst!(new Error('replacement read failed'))
+      const retry = await screen.findByRole('button', { name: 'Retry saved settings' })
+      expect(screen.getByRole('alert')).toHaveTextContent('Your saved settings could not be loaded')
+      expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
+      await user.click(retry)
+      expect(screen.getByRole('status')).toHaveTextContent('Loading saved settings')
+      expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
+      await waitFor(() => expect(typeof resolveRetry).toBe('function'))
+      resolveRetry!({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
+      expect(await screen.findByLabelText('Squat set 1 weight (lb)')).toHaveValue(44.1)
+      expect(calls).toBe(2)
+    } finally {
+      rejectFirst?.(new Error('fixture cleanup'))
+      resolveRetry?.({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
+    }
   })
 })

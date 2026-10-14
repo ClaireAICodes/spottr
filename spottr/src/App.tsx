@@ -19,17 +19,12 @@ import { GymManager } from './GymManager'
 import { WorkoutPlanner } from './WorkoutPlanner'
 import { SettingsView } from './SettingsView'
 import { useInstallPrompt } from './InstallPanel'
-import { createIndexedDbExerciseRepository } from './exerciseRepository'
-import { createExerciseService, type ExerciseService } from './exercises'
-import { createIndexedDbGymRepository } from './gymRepository'
-import { createGymService, type Gym, type GymService } from './gyms'
-import { createIndexedDbWorkoutRepository } from './workoutRepository'
-import { createIndexedDbSessionRepository } from './sessionRepository'
-import { createMemorySessionRepository, createSessionService, type CompletedWorkoutSession, type SessionService, type WorkoutSession } from './sessions'
-import { withWorkoutIntegrityLock } from './workoutIntegrity'
-import { createWorkoutService, type WorkoutService, type WorkoutTemplate } from './workouts'
-import { createIndexedDbSettingsRepository } from './settingsRepository'
-import { createSettingsService, DEFAULT_SETTINGS, type AppSettings, type SettingsService } from './settings'
+import type { ExerciseService } from './exercises'
+import type { Gym, GymService } from './gyms'
+import type { CompletedWorkoutSession, SessionService, WorkoutSession } from './sessions'
+import type { WorkoutService, WorkoutTemplate } from './workouts'
+import { DEFAULT_SETTINGS, type AppSettings, type SettingsService } from './settings'
+import { composeDataset } from './datasetCoordinator'
 
 const tabs = [
   { label: 'Home', icon: Home },
@@ -40,25 +35,14 @@ const tabs = [
 ] as const
 
 const compactNavQuery = '(max-width: 820px)'
-const defaultGymService = createGymService(createIndexedDbGymRepository())
-const defaultExerciseService = createExerciseService(createIndexedDbExerciseRepository())
-const defaultWorkoutService = createWorkoutService(createIndexedDbWorkoutRepository(), {
-  gymExists: async (id) => Boolean(await defaultGymService.get(id)),
-})
-const defaultSessionService = createSessionService(
-  createIndexedDbSessionRepository(),
-  defaultWorkoutService,
-  defaultExerciseService,
-  { resolveGymName: async (id) => (await defaultGymService.get(id))?.name ?? null },
-)
-const defaultSettingsService = createSettingsService(createIndexedDbSettingsRepository())
+const defaultDataset = composeDataset()
 
 export function App({
-  gymService = defaultGymService,
-  exerciseService = defaultExerciseService,
-  workoutService = defaultWorkoutService,
-  sessionService,
-  settingsService = defaultSettingsService,
+  gymService: injectedGymService,
+  exerciseService: injectedExerciseService,
+  workoutService: injectedWorkoutService,
+  sessionService: injectedSessionService,
+  settingsService: injectedSettingsService,
 }: {
   gymService?: GymService
   exerciseService?: ExerciseService
@@ -66,6 +50,17 @@ export function App({
   sessionService?: SessionService
   settingsService?: SettingsService
 }) {
+  const coreDataset = useMemo(() => (
+    injectedGymService || injectedExerciseService || injectedWorkoutService || injectedSessionService
+      ? composeDataset({ gymService: injectedGymService, exerciseService: injectedExerciseService,
+          workoutService: injectedWorkoutService, sessionService: injectedSessionService })
+      : defaultDataset
+  ), [injectedGymService, injectedExerciseService, injectedWorkoutService, injectedSessionService])
+  const dataset = useMemo(() => injectedSettingsService
+    ? coreDataset.withSettings(injectedSettingsService)
+    : coreDataset, [coreDataset, injectedSettingsService])
+  const { gymService, exerciseService, workoutService, settingsService, sessionService: activeSessionService } = dataset
+  const managedGymService = gymService
   const [activeTab, setActiveTab] = useState(0)
   const [isManagingGyms, setIsManagingGyms] = useState(false)
   const [selectedGym, setSelectedGym] = useState<Gym | null>(null)
@@ -81,6 +76,7 @@ export function App({
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [settingsStatus, setSettingsStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [settingsReload, setSettingsReload] = useState(0)
+  const [settingsOrigin, setSettingsOrigin] = useState(settingsService)
   const settingsExitButton = useRef<HTMLButtonElement>(null)
   const settingsRetryButton = useRef<HTMLButtonElement>(null)
   const settingsRetryOrigin = useRef<number | null>(null)
@@ -95,24 +91,7 @@ export function App({
   const resumeButton = useRef<HTMLButtonElement>(null)
   const [restoreResumeFocus, setRestoreResumeFocus] = useState(false)
   const installPrompt = useInstallPrompt()
-  const managedGymService = useMemo(() => ({
-    ...gymService,
-    async remove(id: string) {
-      await withWorkoutIntegrityLock(async () => {
-        if ((await workoutService.list(id)).length > 0) {
-          throw new Error('Delete linked workouts before deleting this gym')
-        }
-        await gymService.remove(id)
-      })
-    },
-  }), [gymService, workoutService])
-  const activeSessionService = useMemo(() => sessionService ?? (
-    workoutService === defaultWorkoutService && exerciseService === defaultExerciseService
-      ? defaultSessionService
-      : createSessionService(createMemorySessionRepository(), workoutService, exerciseService, {
-          resolveGymName: async (id) => (await gymService.get(id))?.name ?? null,
-        })
-  ), [exerciseService, gymService, sessionService, workoutService])
+
 
   useEffect(() => {
     let current = true
@@ -120,11 +99,21 @@ export function App({
     settingsService.get().then((loaded) => {
       if (current) {
         setSettings(loaded)
+        setSettingsOrigin(settingsService)
         setSettingsStatus('ready')
       }
-    }).catch(() => { if (current) setSettingsStatus('error') })
+    }).catch(() => {
+      if (current) {
+        // Rejection belongs to this origin too; expose recovery without old values.
+        setSettingsOrigin(settingsService)
+        setSettingsStatus('error')
+      }
+    })
     return () => { current = false }
   }, [settingsService, settingsReload])
+
+  // Remain gated until values from this exact settings origin have loaded.
+  const settingsServiceChanged = settingsOrigin !== settingsService
 
   useEffect(() => {
     if (!window.matchMedia) return
@@ -144,6 +133,9 @@ export function App({
       if (requestId !== selectedGymRequest.current) return
       setSelectedGym(gym)
       setGymStatus('ready')
+      if (!gym) void gymService.repairInvalidSelection?.().catch(() => {
+        if (requestId === selectedGymRequest.current) { setGymStatus('error') }
+      })
     }).catch(() => {
       if (requestId !== selectedGymRequest.current) return
       setSelectedGym(null)
@@ -151,10 +143,6 @@ export function App({
     })
   }
 
-  useEffect(() => {
-    loadSelectedGym()
-    return () => { selectedGymRequest.current += 1 }
-  }, [gymService])
 
   async function loadActiveSession() {
     const requestId = ++activeSessionRequest.current
@@ -176,6 +164,12 @@ export function App({
     void loadActiveSession()
     return () => { activeSessionRequest.current += 1 }
   }, [activeSessionService])
+
+  useEffect(() => {
+    loadSelectedGym()
+    return () => { selectedGymRequest.current += 1 }
+  }, [gymService])
+
 
   useEffect(() => {
     let current = true
@@ -302,7 +296,7 @@ export function App({
 
         </header>}
 
-        {settingsSensitiveView && settingsStatus === 'loading' ? (
+        {settingsSensitiveView && (settingsStatus === 'loading' || settingsServiceChanged) ? (
           <section id="main-view" role="tabpanel" aria-labelledby={`tab-${current.label.toLowerCase()}`}>
             <p role="status">Loading saved settings…</p>
             {isEnteringSession && <ActionButton ref={settingsExitButton} onClick={exitSession}>Exit workout</ActionButton>}
@@ -360,9 +354,7 @@ export function App({
           <SettingsView
             settingsService={settingsService}
             exerciseService={exerciseService}
-            gymService={gymService}
-            workoutService={workoutService}
-            sessionService={activeSessionService}
+            backupOperations={dataset}
             onSettingsChange={setSettings}
             onBackupRestored={handleBackupRestored}
             onBackupRestoreStateChange={setIsBackupRestoreInProgress}

@@ -27,7 +27,8 @@ export interface GymRepository {
   close?(): Promise<void>
 }
 
-export type GymService = Omit<ReturnType<typeof createGymService>, 'waitForIdle'> & {
+export type GymService = Omit<ReturnType<typeof createGymService>, 'waitForIdle' | 'repairInvalidSelection'> & {
+  repairInvalidSelection?: () => Promise<void>
   waitForIdle?: () => Promise<void>
 }
 
@@ -98,13 +99,18 @@ export function createGymService(repository: GymRepository, options: GymServiceO
       })
     },
 
+    // Pure observation: UI may await a delayed result without holding a writer.
     async getSelected() {
+      const id = await repository.getSelectedId()
+      return id ? repository.get(id) : null
+    },
+
+    // Explicit maintenance root. Revalidate the current identity under mutation order.
+    async repairInvalidSelection() {
       return mutate(async () => {
         const id = await repository.getSelectedId()
-        if (!id) return null
-        const gym = await repository.get(id)
-        if (!gym) await repository.select(null)
-        return gym
+        if (!id || await repository.get(id)) return
+        if (await repository.getSelectedId() === id) await repository.select(null)
       })
     },
 

@@ -160,8 +160,10 @@ describe('gym management journey', () => {
     fireEvent.submit(form)
     fireEvent.submit(form)
 
-    expect(createCalls).toBe(1)
-    releaseCreate()
+    try {
+      await waitFor(() => expect(createCalls).toBe(1))
+      expect(createCalls).toBe(1)
+    } finally { releaseCreate() }
     expect(await screen.findByRole('article', { name: 'One Gym' })).toBeInTheDocument()
   })
 
@@ -1316,12 +1318,14 @@ describe('active workout session journey', () => {
     const sessionService = { ...baseSessionService, getActive: () => oldLoad }
     render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
 
-    await user.click(await screen.findByRole('button', { name: /start workout at gym/i }))
-    await user.click(screen.getByRole('button', { name: /start strength/i }))
-    expect(await screen.findByRole('heading', { name: 'Strength' })).toBeInTheDocument()
-    releaseLoad(null)
-    await act(async () => { await oldLoad })
+    try {
+      await user.click(await screen.findByRole('button', { name: /start workout at gym/i }))
+      await user.click(screen.getByRole('button', { name: /start strength/i }))
+      expect(await screen.findByRole('heading', { name: 'Strength' })).toBeInTheDocument()
+      releaseLoad(null)
+      await act(async () => { await oldLoad })
 
-    expect(screen.getByRole('heading', { name: 'Strength' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Strength' })).toBeInTheDocument()
+    } finally { releaseLoad(null) }
   })
 })
