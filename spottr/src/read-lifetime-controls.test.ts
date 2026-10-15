@@ -123,6 +123,40 @@ it('lifetime: failed compensated restore invalidates held success and preserves 
   expect(await roots.exportBackup()).toEqual(before)
 })
 
+it('lifetime: three invalidated read attempts reject visibly and a later fresh read recovers', async () => {
+  const cores = fixture()
+  const backup = await createSpottrBackup(cores)
+  const restoring = composeDataset(cores)
+  const entered = [gate(), gate(), gate()]
+  const release = [gate(), gate(), gate()]
+  let calls = 0
+  const reading = restoring.withSettings({ ...cores.settingsService, async get() {
+    const index = calls++
+    const value = await cores.settingsService.get()
+    if (index < 3) { entered[index].resolve(); await release[index].promise }
+    return value
+  } })
+  const verdict = reading.settingsService.get().then(
+    value => ({ value, error: undefined }),
+    (error: unknown) => ({ value: undefined, error }),
+  )
+  for (let index = 0; index < 3; index++) {
+    await entered[index].promise
+    try {
+      await restoring.restoreBackup({ ...backup, settings: { ...DEFAULT_SETTINGS, restSeconds: 100 + index } })
+    } finally { release[index].resolve() }
+  }
+  // A fourth attempt is deliberately unheld so the old unbounded loop fails
+  // deterministically with a successful result, rather than hanging the test.
+  const outcome = await verdict
+  expect(outcome.error).toBeInstanceOf(Error)
+  expect((outcome.error as Error).message).toBe('Dataset changed during all 3 read attempts; please retry')
+  expect(outcome.value).toBeUndefined()
+  expect(calls).toBe(3)
+  expect(await reading.settingsService.get()).toEqual({ ...DEFAULT_SETTINGS, restSeconds: 102 })
+  expect(calls).toBe(4)
+})
+
 it('lifetime: export retains entire decorated pure-read promise and blocks later mutation', async () => {
   const cores = fixture(), entered = gate(), release = gate()
   let enteredWrite = false

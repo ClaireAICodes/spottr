@@ -68,8 +68,10 @@ function advanceRestoreGeneration() {
   // if shared origin metadata is unavailable; never silently use a realm epoch.
   localStorage.setItem(generationKey, String(BigInt(generation()) + 1n))
 }
+// Bound completed-but-invalidated reads, not the lifetime of a pending core read.
+const ordinaryReadAttempts = 3
 async function ordinaryRead<T>(operation: () => Promise<T>): Promise<T> {
-  for (;;) {
+  for (let attemptNumber = 0; attemptNumber < ordinaryReadAttempts; attemptNumber++) {
     const attempt = await runRoot(() => {
       const observed = generation()
       const pending = Promise.resolve(operation())
@@ -83,6 +85,7 @@ async function ordinaryRead<T>(operation: () => Promise<T>): Promise<T> {
     const valid = await runRoot(() => Promise.resolve(attempt.observed === generation()), 'shared')
     if (valid) return result
   }
+  throw new Error(`Dataset changed during all ${ordinaryReadAttempts} read attempts; please retry`)
 }
 function publish<T extends object>(core: T, ordinaryMethods: string[] = []): T {
   rejectAdmitted(core)
