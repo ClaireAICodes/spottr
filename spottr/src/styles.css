@@ -478,6 +478,9 @@ p { color: var(--muted); line-height: 1.55; }
 .settings-save .action-button { margin: 0; }
 .settings-save p { margin: 0; color: #315000; font-weight: 800; }
 
+/* Seven pixels of outline plus room beyond fractional layout boundaries. */
+:is(.workout-planner, .settings-view) input[type="number"] { scroll-margin-block: 12px; }
+
 @media (max-width: 820px) {
   /* Keep native focus/target reveal above the fixed navigation, including safe areas. */
   html { scroll-padding-bottom: calc(92px + env(safe-area-inset-bottom)); }

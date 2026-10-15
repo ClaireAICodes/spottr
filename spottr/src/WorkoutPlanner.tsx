@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Copy, Dumbbell, Pencil, Plus, Trash2 } from 'lucide
 import type { FormEvent } from 'react'
 import type { Exercise, ExerciseDraft, ExerciseService } from './exercises'
 import type { Gym, GymService } from './gyms'
-import { ActionButton, Panel } from './primitives'
+import { ActionButton, Panel, revealNumericInput } from './primitives'
 import { displayWeight, storedWeight, type AppSettings } from './settings'
 import type { SetKind, TemplateExerciseDraft, WorkoutService, WorkoutTemplate } from './workouts'
 
@@ -403,7 +403,7 @@ export function WorkoutPlanner({
   }, [pendingDelete, isSaving, status])
 
   return (
-    <section id="main-view" role="tabpanel" aria-labelledby="tab-workouts" className="workout-planner">
+    <section id="main-view" role="tabpanel" aria-labelledby="tab-workouts" className="workout-planner" onFocusCapture={revealNumericInput} onInputCapture={revealNumericInput}>
       <div className="workout-planner-content" inert={pendingDelete || newExercise ? true : undefined} aria-hidden={pendingDelete || newExercise ? true : undefined}>
       <div className="section-heading workout-heading">
         <div>

@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Database, Download, Save, Upload } from 'lucide-react'
 import { downloadSpottrBackup, MAX_BACKUP_FILE_BYTES, parseSpottrBackup, serializeSpottrBackup, type SpottrBackup } from './backup'
 import type { Dataset } from './datasetCoordinator'
 import type { ExerciseService } from './exercises'
 
 import { InstallPanel, type InstallPromptState } from './InstallPanel'
-import { ActionButton, Panel } from './primitives'
+import { ActionButton, Panel, revealNumericInput } from './primitives'
 
 import { DEFAULT_SETTINGS, type AppSettings, type SettingsService } from './settings'
 
@@ -43,6 +43,33 @@ export function SettingsView({
   const [error, setError] = useState('')
   const [backupError, setBackupError] = useState('')
   const [importError, setImportError] = useState('')
+  const saveButton = useRef<HTMLButtonElement>(null)
+  const saveOperation = useRef<{ current: boolean; keyboard: boolean; settled: boolean } | null>(null)
+
+  useEffect(() => {
+    const relinquish = () => { if (saveOperation.current) saveOperation.current.keyboard = false }
+    const keydown = (event: KeyboardEvent) => { if (event.key === 'Tab' || event.key === 'Escape') relinquish() }
+    const focusin = (event: FocusEvent) => { if (event.target !== saveButton.current) relinquish() }
+    document.addEventListener('keydown', keydown, true)
+    document.addEventListener('pointerdown', relinquish, true)
+    document.addEventListener('focusin', focusin, true)
+    window.addEventListener('blur', relinquish)
+    return () => {
+      if (saveOperation.current) saveOperation.current.current = false
+      document.removeEventListener('keydown', keydown, true)
+      document.removeEventListener('pointerdown', relinquish, true)
+      document.removeEventListener('focusin', focusin, true)
+      window.removeEventListener('blur', relinquish)
+    }
+  }, [settingsService, exerciseService])
+
+  // Restore only after React has re-enabled the initiating contextual trigger.
+  useLayoutEffect(() => {
+    const operation = saveOperation.current
+    if (!operation?.settled) return
+    saveOperation.current = null
+    if (operation.current && operation.keyboard && !saveButton.current?.disabled) saveButton.current?.focus()
+  }, [status, error])
 
   useEffect(() => {
     let current = true
@@ -65,15 +92,21 @@ export function SettingsView({
 
   async function save(event: React.FormEvent) {
     event.preventDefault()
-    if (status === 'saving') return
+    if (status === 'saving' || saveOperation.current?.current) return
+    const operation = { current: true, keyboard: document.activeElement === saveButton.current && !!saveButton.current?.matches(':focus-visible'), settled: false }
+    saveOperation.current = operation
     setStatus('saving')
     setError('')
     try {
       const saved = await settingsService.update(settings)
+      if (!operation.current) return
+      operation.settled = true
       setSettings(saved)
       onSettingsChange(saved)
       setStatus('saved')
     } catch (caught) {
+      if (!operation.current) return
+      operation.settled = true
       setError(caught instanceof Error ? caught.message : 'Settings could not be saved.')
       setStatus('ready')
     }
@@ -145,7 +178,7 @@ export function SettingsView({
   }
 
   return (
-    <section id="main-view" role="tabpanel" aria-labelledby="tab-settings" aria-busy={importStatus === 'restoring'} className="settings-view">
+    <section id="main-view" role="tabpanel" aria-labelledby="tab-settings" aria-busy={importStatus === 'restoring'} className="settings-view" onFocusCapture={revealNumericInput} onInputCapture={revealNumericInput}>
       <div className="section-heading">
         <div><p className="eyebrow">Saved on this device</p><h2>Settings</h2><p>Choose how workout feedback and targets appear.</p></div>
       </div>
@@ -200,7 +233,7 @@ export function SettingsView({
             {importError && <p role="alert" className="form-message error-copy">{importError}</p>}
           </Panel>
           <div className="settings-save">
-            <ActionButton type="submit" disabled={status === 'saving' || importStatus === 'restoring'}><Save size={18} aria-hidden="true" /> {status === 'saving' ? 'Saving…' : 'Save settings'}</ActionButton>
+            <ActionButton ref={saveButton} type="submit" disabled={status === 'saving' || importStatus === 'restoring'}><Save size={18} aria-hidden="true" /> {status === 'saving' ? 'Saving…' : 'Save settings'}</ActionButton>
             {status === 'saved' && <p role="status">Settings saved.</p>}
           </div>
         </form>
