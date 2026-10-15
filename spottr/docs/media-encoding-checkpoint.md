@@ -64,8 +64,9 @@ JPEG/PNG image path is unchanged. The B2 repair removes the autoplay launch over
 Normal Chromium policy is exercised after a natural Train-tab click and through
 the public ExerciseLibrary keyboard Tab/Enter file chooser with a real owned WebM.
 The public upload succeeds and its preview decodes at width 720. This is browser
-chooser automation, not physical OS chooser certification. Source playback is
-muted; decoded audio still routes through Web Audio, with audible content OPEN.
+chooser automation, not physical OS chooser certification. Source playback was
+muted in this historical checkpoint; the audio-content
+regression below supersedes that behavior.
 
 B2 regression RED: pending AudioContext.resume cancellation returned `hung` after
 500 ms, with unchanged dataset. GREEN: resume and play each reject on cancellation,
@@ -148,3 +149,24 @@ omission. Unresolved production codec coverage retains Thursday budget.
 
 This is a reviewable implementation checkpoint, not whole-envelope acceptance,
 independent approval, publication approval receipt or final usable-product claim.
+
+## Audio-content regression
+
+`npx playwright test --config playwright.audio.config.ts --retries=0 --output=<private-output-directory>`
+runs the isolated Chromium audio regression under the default autoplay policy.
+The test generates original animated canvas video plus a 440 Hz sine at gain
+0.25, retains the genuine VP8/Opus input and encoded output in the selected output
+directory, and attaches via the public keyboard file chooser. It decodes container
+audio samples and checks RMS, 440 Hz amplitude, off-frequency rejection and
+input/output energy agreement in three separated time windows. Video playback
+must advance and its decoded pixels must change. Public backup bytes must match
+after reload, with only exportedAt excluded.
+
+The source media element must not be muted: Chromium's media-element audio source
+otherwise supplies silence to the encoder. Its Web Audio graph connects only to
+the recording destination, not to speakers. No autoplay override, preparation
+substitute or external media dependency is used. Browser permission/API rejection
+still follows the existing bounded failure route; this does not grant autoplay
+permission or certify other engines. Decoded signal preservation is not human
+listening/native-device fidelity, production hosting, arbitrary speech/music
+fidelity, or the remaining codec/time/memory/retry matrix.

@@ -68,9 +68,10 @@ function waitForOperation(operation: Promise<void>, signal: AbortSignal) {
 async function encode(file: File, type: string, bitrate: number, signal: AbortSignal, progress: (fraction: number) => void) {
   const video = document.createElement('video')
   video.playsInline = true
-  // Decoded audio goes to the recorder via Web Audio, never to the speakers.
-  // Muted source playback also avoids a second audible autoplay permission gate.
-  video.muted = true
+  // MediaElementAudioSourceNode observes the element's mute state: muting here
+  // records silence. The graph below connects only to the recording destination,
+  // never audio.destination, so unmuted decoding does not play through speakers.
+  video.muted = false
   const url = URL.createObjectURL(file)
   let stream: MediaStream | undefined
   let recorder: MediaRecorder | undefined
