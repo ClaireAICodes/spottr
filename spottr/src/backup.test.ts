@@ -344,9 +344,13 @@ describe('Spottr backup export', () => {
     }
     expect(() => parseSpottrBackup(JSON.stringify(pendingDecisionWithoutTemplateReferences))).toThrow(/not a valid Spottr backup/i)
 
-    const decisionMatchingTarget = structuredClone(backup)
-    decisionMatchingTarget.entities.completedSessions[0].exercises[0].sets[0].targetDecision = 'accepted'
-    expect(() => parseSpottrBackup(JSON.stringify(decisionMatchingTarget))).toThrow(/not a valid Spottr backup/i)
+    // Matching targets without a PR have no offer. Legitimate final PR-at-plan
+    // accept/decline decisions are covered by the service-produced roundtrip.
+    for (const decision of ['accepted', 'declined'] as const) {
+      const decisionMatchingTargetWithoutPr = structuredClone(backup)
+      decisionMatchingTargetWithoutPr.entities.completedSessions[0].exercises[0].sets[0].targetDecision = decision
+      expect(() => parseSpottrBackup(JSON.stringify(decisionMatchingTargetWithoutPr))).toThrow(/not a valid Spottr backup/i)
+    }
 
     const setBeforeSession = structuredClone(pendingDecisionWithoutTemplateReferences)
     delete setBeforeSession.entities.completedSessions[0].exercises[0].sets[0].targetDecision

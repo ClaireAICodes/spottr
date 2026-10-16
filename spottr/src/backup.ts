@@ -207,9 +207,14 @@ function isSessionSet(value: unknown, start: string, end: string, completedSessi
     && !(value.completedAt && value.skippedAt)
     && (value.personalRecords === undefined || (Array.isArray(value.personalRecords)
       && value.personalRecords.every((record) => record === 'weight' || record === 'set-volume')))
-    && (value.targetDecision === undefined || ['accepting', 'declining', 'accepted', 'declined'].includes(String(value.targetDecision)))
+    && (value.targetDecision === undefined || (typeof value.targetDecision === 'string'
+      && ['accepting', 'declining', 'accepted', 'declined'].includes(value.targetDecision)))
     && (!hasTargetDecision || (completedSession && Boolean(value.completedAt) && !value.skippedAt))
-    && (!hasTargetDecision || value.weight !== value.targetWeight || value.reps !== value.targetReps)
+    // Equal-target PR offers record final intent only; no template write or
+    // pending compensation state is produced by decideFutureTarget.
+    && (!hasTargetDecision || value.weight !== value.targetWeight || value.reps !== value.targetReps
+      || ((value.targetDecision === 'accepted' || value.targetDecision === 'declined')
+        && Array.isArray(value.personalRecords) && value.personalRecords.length > 0))
     && (previousTarget === undefined || (isRecord(previousTarget)
       && typeof previousTarget.weight === 'number' && Number.isFinite(previousTarget.weight) && previousTarget.weight >= 0
       && typeof previousTarget.reps === 'number' && Number.isSafeInteger(previousTarget.reps) && previousTarget.reps > 0))
