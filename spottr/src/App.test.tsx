@@ -962,6 +962,7 @@ describe('active workout session journey', () => {
     releaseSave()
     await waitFor(() => expect(restoreButton).toBeEnabled())
     await user.click(restoreButton)
+    await user.click(await screen.findByRole('button', { name: 'Replace all saved data' }))
 
     await restoreStarted
     expect(screen.getByRole('tab', { name: /home/i })).toBeDisabled()
@@ -1033,6 +1034,7 @@ describe('active workout session journey', () => {
       new File([JSON.stringify(backup)], 'spottr-backup.json', { type: 'application/json' }),
     )
     await user.click(await screen.findByRole('button', { name: /restore backup/i }))
+    await user.click(await screen.findByRole('button', { name: 'Replace all saved data' }))
     await screen.findByText(/backup restored\. your previous spottr data was replaced/i)
     await user.click(screen.getByRole('tab', { name: /home/i }))
     expect(await screen.findByText(/work out at/i)).toHaveTextContent(restoredGym.name)

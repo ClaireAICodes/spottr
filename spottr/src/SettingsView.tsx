@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Database, Download, Save, Upload } from 'lucide-react'
 import { downloadSpottrBackup, MAX_BACKUP_FILE_BYTES, parseSpottrBackup, serializeSpottrBackup, type SpottrBackup } from './backup'
 import type { Dataset } from './datasetCoordinator'
+import { preflightBackupMedia } from './backupMediaPreflight'
 import type { ExerciseService } from './exercises'
 
 import { InstallPanel, type InstallPromptState } from './InstallPanel'
@@ -40,10 +41,22 @@ export function SettingsView({
   const [backupStatus, setBackupStatus] = useState<'idle' | 'exporting' | 'downloaded' | 'error'>('idle')
   const [importStatus, setImportStatus] = useState<'idle' | 'validating' | 'valid' | 'restoring' | 'restored' | 'error'>('idle')
   const [validatedBackup, setValidatedBackup] = useState<SpottrBackup | null>(null)
+  const [confirmReplace, setConfirmReplace] = useState(false)
   const [error, setError] = useState('')
   const [backupError, setBackupError] = useState('')
   const [importError, setImportError] = useState('')
   const saveButton = useRef<HTMLButtonElement>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  function cancelImport() {
+    importOperation.current?.abort()
+    setConfirmReplace(false)
+    setValidatedBackup(null)
+    setImportStatus('idle')
+    setImportError('')
+    fileInput.current?.focus()
+  }
+  const importOperation = useRef<AbortController | null>(null)
+  useEffect(() => () => { importOperation.current?.abort() }, [backupOperations, exerciseService, settingsService])
   const saveOperation = useRef<{ current: boolean; keyboard: boolean; settled: boolean } | null>(null)
 
   useEffect(() => {
@@ -127,6 +140,10 @@ export function SettingsView({
   }
 
   async function validateImport(file: File) {
+    importOperation.current?.abort()
+    const operation = new AbortController()
+    importOperation.current = operation
+    setConfirmReplace(false)
     setImportStatus('validating')
     setImportError('')
     setValidatedBackup(null)
@@ -136,13 +153,21 @@ export function SettingsView({
       }
       const serialized = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result))
-        reader.onerror = () => reject(reader.error ?? new Error('The backup file could not be read.'))
+        const abort = () => { reader.abort(); reject(operation.signal.reason) }
+        const cleanup = () => operation.signal.removeEventListener('abort', abort)
+        operation.signal.addEventListener('abort', abort, { once: true })
+        reader.onload = () => { cleanup(); resolve(String(reader.result)) }
+        reader.onerror = () => { cleanup(); reject(reader.error ?? new Error('The backup file could not be read.')) }
+        reader.onabort = cleanup
         reader.readAsText(file)
       })
-      setValidatedBackup(parseSpottrBackup(serialized))
+      operation.signal.throwIfAborted()
+      const incoming = await preflightBackupMedia(parseSpottrBackup(serialized), operation.signal)
+      if (operation.signal.aborted) return
+      setValidatedBackup(incoming)
       setImportStatus('valid')
     } catch (caught) {
+      if (operation.signal.aborted) return
       setImportError(caught instanceof Error ? caught.message : 'This file is not a valid Spottr backup. Your saved data has not been changed.')
       setImportStatus('error')
     }
@@ -178,7 +203,12 @@ export function SettingsView({
   }
 
   return (
-    <section id="main-view" role="tabpanel" aria-labelledby="tab-settings" aria-busy={importStatus === 'restoring'} className="settings-view" onFocusCapture={revealNumericInput} onInputCapture={revealNumericInput}>
+    <section id="main-view" role="tabpanel" aria-labelledby="tab-settings" aria-busy={importStatus === 'restoring'} className="settings-view" onFocusCapture={revealNumericInput} onInputCapture={revealNumericInput} onKeyDown={(event) => {
+      if (event.key === 'Escape' && (importStatus === 'valid' || importStatus === 'validating')) {
+        event.preventDefault()
+        cancelImport()
+      }
+    }}>
       <div className="section-heading">
         <div><p className="eyebrow">Saved on this device</p><h2>Settings</h2><p>Choose how workout feedback and targets appear.</p></div>
       </div>
@@ -215,9 +245,10 @@ export function SettingsView({
             <label>
               Choose backup file
               <input
+                ref={fileInput}
                 type="file"
                 accept="application/json,.json"
-                disabled={importStatus === 'validating' || importStatus === 'restoring'}
+                disabled={importStatus === 'restoring'}
                 onChange={(event) => {
                   const file = event.target.files?.[0]
                   if (file) void validateImport(file)
@@ -226,8 +257,9 @@ export function SettingsView({
               />
             </label>
             <p>Spottr checks the complete file before any restore can change your saved data.</p>
-            {importStatus === 'validating' && <p role="status"><Upload size={18} aria-hidden="true" /> Checking backup…</p>}
-            {importStatus === 'valid' && <><p role="status">Backup is compatible and ready to restore. Restoring replaces all data currently saved in Spottr.</p><ActionButton type="button" disabled={status === 'saving'} onClick={() => void restoreBackup()}><Upload size={18} aria-hidden="true" /> Restore backup</ActionButton></>}
+            {importStatus === 'validating' && <><p role="status"><Upload size={18} aria-hidden="true" /> Checking backup…</p><ActionButton type="button" onClick={cancelImport}>Cancel checking backup</ActionButton></>}
+            {importStatus === 'valid' && !confirmReplace && <><p role="status">Backup is compatible and ready to restore. Restoring replaces all data currently saved in Spottr.</p><ActionButton type="button" disabled={status === 'saving'} onClick={() => setConfirmReplace(true)}><Upload size={18} aria-hidden="true" /> Restore backup</ActionButton></>}
+            {importStatus === 'valid' && confirmReplace && <fieldset><legend>Replace saved Spottr data?</legend><p>This replaces all gyms, exercises, media, workouts, active and completed sessions, and settings on this device. Current data will be lost. Download a backup first if you want to keep it.</p><ActionButton type="button" autoFocus disabled={status === 'saving'} onClick={() => void restoreBackup()}>Replace all saved data</ActionButton><ActionButton type="button" onClick={cancelImport}>Cancel</ActionButton></fieldset>}
             {importStatus === 'restoring' && <p role="status">Restoring backup…</p>}
             {importStatus === 'restored' && <p role="status">Backup restored. Your previous Spottr data was replaced.</p>}
             {importError && <p role="alert" className="form-message error-copy">{importError}</p>}
