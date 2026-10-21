@@ -382,7 +382,7 @@ function base64ToBlob(data: string, type: string) {
   return new Blob([bytes], { type })
 }
 
-function importExercise(exercise: ExportedExercise): Exercise {
+export function importExercise(exercise: ExportedExercise): Exercise {
   return {
     ...exercise,
     media: exercise.media.map(({ content, ...metadata }) => ({
@@ -402,6 +402,15 @@ async function exportExercise(exercise: Exercise): Promise<ExportedExercise> {
         data: await blobToBase64(blob),
       },
     }))),
+  }
+}
+
+// Internal persisted-snapshot validation. Not an incoming-cap bypass on a service.
+export async function assertStoredBackup(value: unknown) {
+  const candidate = value as SpottrBackup & { entities: { exercises: Exercise[] } }
+  const exercises = await Promise.all((candidate.entities.exercises as unknown as Exercise[]).map(exportExercise))
+  if (!isSpottrBackup({ ...candidate, entities: { ...candidate.entities, exercises } })) {
+    throw new Error('Invalid persisted dataset; replacement has not started')
   }
 }
 
@@ -441,11 +450,11 @@ export async function createSpottrBackup({
 
 async function replaceWithBackup(backup: SpottrBackup, services: BackupServices, exerciseRollback?: () => Promise<void>) {
   const results = await Promise.allSettled([
-    services.gymService.replaceAll(backup.entities.gyms, backup.entities.selectedGymId),
-    exerciseRollback ? exerciseRollback() : services.exerciseService.replaceAll(backup.entities.exercises.map(importExercise)),
-    services.workoutService.replaceAll(backup.entities.workouts),
-    services.sessionService.replaceAll(backup.entities.activeSession, backup.entities.completedSessions),
-    services.settingsService.update(backup.settings),
+    Promise.resolve().then(() => services.gymService.replaceAll(backup.entities.gyms, backup.entities.selectedGymId)),
+    Promise.resolve().then(() => exerciseRollback ? exerciseRollback() : services.exerciseService.replaceAll(backup.entities.exercises.map(importExercise))),
+    Promise.resolve().then(() => services.workoutService.replaceAll(backup.entities.workouts)),
+    Promise.resolve().then(() => services.sessionService.replaceAll(backup.entities.activeSession, backup.entities.completedSessions)),
+    Promise.resolve().then(() => services.settingsService.update(backup.settings)),
   ])
   const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
   if (errors.length > 0) throw new AggregateError(errors, 'Backup restore failed')
@@ -453,7 +462,15 @@ async function replaceWithBackup(backup: SpottrBackup, services: BackupServices,
 
 let restoreQueue: Promise<void> = Promise.resolve()
 
-export function restoreSpottrBackup(backup: SpottrBackup, services: BackupServices) {
+export type RestoreLifecycle = {
+  prepare(backup: SpottrBackup): Promise<void>
+  compensating(): Promise<void>
+  committed(): Promise<void>
+  compensated(): Promise<void>
+  failed(error: unknown): Promise<never>
+}
+
+export function restoreSpottrBackup(backup: SpottrBackup, services: BackupServices, lifecycle?: RestoreLifecycle) {
   const restore = async () => {
     // Validate the public direct-restore boundary too, before taking a snapshot
     // or starting any writes. Internal rollback must retain legacy excess media.
@@ -470,16 +487,23 @@ export function restoreSpottrBackup(backup: SpottrBackup, services: BackupServic
     ])
     const previous = await createSpottrBackup(services)
     const exerciseRollback = await services.exerciseService.captureRollback?.()
+    await lifecycle?.prepare(backup)
     try {
       await replaceWithBackup(backup, services)
     } catch (error) {
       try {
+        await lifecycle?.compensating()
         await replaceWithBackup(previous, services, exerciseRollback)
       } catch (rollbackError) {
-        throw new AggregateError([error, rollbackError], 'Backup restore failed and current data could not be fully preserved')
+        const failure = new AggregateError([error, rollbackError], 'Backup restore failed and current data could not be fully preserved')
+        if (lifecycle) return lifecycle.failed(failure)
+        throw failure
       }
+      await lifecycle?.compensated()
       throw error
     }
+    // A committed cleanup failure must never enter the compensation branch.
+    await lifecycle?.committed()
   }
   const result = restoreQueue.then(restore, restore)
   restoreQueue = result.then(() => undefined, () => undefined)

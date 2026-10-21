@@ -1,4 +1,5 @@
 import type { WorkoutRepository, WorkoutTemplate } from './workouts'
+import { replaceTransaction } from './replaceTransaction'
 
 const WORKOUT_DATABASE_VERSION = 1
 const WORKOUTS_STORE = 'workouts'
@@ -67,11 +68,11 @@ export function createIndexedDbWorkoutRepository(databaseName = 'spottr-v1-worko
     },
     async replaceAll(templates) {
       const database = await openDatabase()
-      const transaction = database.transaction(WORKOUTS_STORE, 'readwrite')
-      const store = transaction.objectStore(WORKOUTS_STORE)
-      store.clear()
-      templates.forEach((template) => store.put(template))
-      await transactionComplete(transaction)
+      await replaceTransaction(database, [WORKOUTS_STORE], transaction => {
+        const store = transaction.objectStore(WORKOUTS_STORE)
+        store.clear()
+        templates.forEach((template) => store.put(template))
+      })
     },
     async close() {
       if (!databasePromise) return

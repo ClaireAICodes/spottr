@@ -1,4 +1,5 @@
 import type { AppSettings, SettingsRepository } from './settings'
+import { replaceTransaction } from './replaceTransaction'
 
 const SETTINGS_DATABASE_VERSION = 1
 const SETTINGS_STORE = 'settings'
@@ -42,12 +43,8 @@ export function createIndexedDbSettingsRepository(databaseName = 'spottr-v1-sett
     },
     async save(settings) {
       const database = await openDatabase()
-      await new Promise<void>((resolve, reject) => {
-        const transaction = database.transaction(SETTINGS_STORE, 'readwrite')
+      await replaceTransaction(database, [SETTINGS_STORE], transaction => {
         transaction.objectStore(SETTINGS_STORE).put(settings, APP_SETTINGS_KEY)
-        transaction.oncomplete = () => resolve()
-        transaction.onerror = () => reject(transaction.error ?? new Error('Local storage transaction failed'))
-        transaction.onabort = () => reject(transaction.error ?? new Error('Local storage transaction was cancelled'))
       })
     },
     async close() {

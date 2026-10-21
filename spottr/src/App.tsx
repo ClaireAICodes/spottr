@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   Activity,
   BarChart3,
@@ -24,7 +24,8 @@ import type { Gym, GymService } from './gyms'
 import type { CompletedWorkoutSession, SessionService, WorkoutSession } from './sessions'
 import type { WorkoutService, WorkoutTemplate } from './workouts'
 import { DEFAULT_SETTINGS, type AppSettings, type SettingsService } from './settings'
-import { composeDataset } from './datasetCoordinator'
+import { composeDataset, type Dataset } from './datasetCoordinator'
+import { recoveryDiagnostic } from './recoveryDiagnostic'
 
 const tabs = [
   { label: 'Home', icon: Home },
@@ -50,18 +51,51 @@ export function App({
   sessionService?: SessionService
   settingsService?: SettingsService
 }) {
+  const hasInjectedServices = Boolean(injectedGymService || injectedExerciseService || injectedWorkoutService || injectedSessionService || injectedSettingsService)
   const coreDataset = useMemo(() => (
-    injectedGymService || injectedExerciseService || injectedWorkoutService || injectedSessionService
+    hasInjectedServices
       ? composeDataset({ gymService: injectedGymService, exerciseService: injectedExerciseService,
-          workoutService: injectedWorkoutService, sessionService: injectedSessionService })
+          workoutService: injectedWorkoutService, sessionService: injectedSessionService,
+          settingsService: injectedSettingsService })
       : defaultDataset
-  ), [injectedGymService, injectedExerciseService, injectedWorkoutService, injectedSessionService])
+  ), [hasInjectedServices, injectedGymService, injectedExerciseService, injectedWorkoutService, injectedSessionService])
+  // A settings-origin change must gate settings without replacing live session roots.
   const dataset = useMemo(() => injectedSettingsService
     ? coreDataset.withSettings(injectedSettingsService)
     : coreDataset, [coreDataset, injectedSettingsService])
+  const recoveryState = useSyncExternalStore(dataset.subscribeRecovery, dataset.getRecoveryState)
+  const [activeTab, setActiveTab] = useState(0)
+  const [recoveryError, setRecoveryError] = useState('')
+  const retry = () => { setRecoveryError(''); void dataset.initializeOrRecover().catch(error => setRecoveryError(String(error))) }
+  useEffect(() => {
+    let current = true
+    void dataset.initializeOrRecover().catch(error => { if (current) setRecoveryError(String(error)) })
+    return () => { current = false }
+  }, [dataset])
+  if (recoveryState === 'blocked' || recoveryState === 'recovering') return <main className="app-shell">
+    <h1>Spottr local data recovery</h1>
+
+    {recoveryState === 'blocked' ? <>
+      <p role="alert">Recovery could not finish. Your recovery record has been kept.</p>
+      <button type="button" onClick={retry}>Retry recovery</button>
+      <button type="button" onClick={() => {
+        void dataset.recoveryEvidence().then(recoveryDiagnostic).then(blob => {
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url; link.download = 'spottr-recovery-diagnostic.json'; link.click()
+          setTimeout(() => URL.revokeObjectURL(url), 1000)
+        }).catch(error => setRecoveryError(String(error)))
+      }}>Download recovery evidence</button>
+      <p>This diagnostic is not a verified backup. Keep your original backup file.</p>
+      {recoveryError && <p>{recoveryError}</p>}
+    </> : <p role="status">Recovering local data…</p>}
+  </main>
+  return <ReadyApp dataset={dataset} ready={recoveryState === 'ready'} activeTab={activeTab} setActiveTab={setActiveTab} />
+}
+
+function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<Dataset, 'withSettings'>; ready: boolean; activeTab: number; setActiveTab: (tab: number) => void }) {
   const { gymService, exerciseService, workoutService, settingsService, sessionService: activeSessionService } = dataset
   const managedGymService = gymService
-  const [activeTab, setActiveTab] = useState(0)
   const [isManagingGyms, setIsManagingGyms] = useState(false)
   const [selectedGym, setSelectedGym] = useState<Gym | null>(null)
   const [gymStatus, setGymStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -94,6 +128,7 @@ export function App({
 
 
   useEffect(() => {
+    if (!ready) return
     let current = true
     setSettingsStatus('loading')
     settingsService.get().then((loaded) => {
@@ -110,7 +145,7 @@ export function App({
       }
     })
     return () => { current = false }
-  }, [settingsService, settingsReload])
+  }, [ready, settingsService, settingsReload])
 
   // Remain gated until values from this exact settings origin have loaded.
   const settingsServiceChanged = settingsOrigin !== settingsService
@@ -158,20 +193,23 @@ export function App({
   }
 
   useEffect(() => {
+    if (!ready) return
     setActiveSession(null)
     setIsSessionOpen(false)
     setSessionLoadError('')
     void loadActiveSession()
     return () => { activeSessionRequest.current += 1 }
-  }, [activeSessionService])
+  }, [ready, activeSessionService])
 
   useEffect(() => {
+    if (!ready) return
     loadSelectedGym()
     return () => { selectedGymRequest.current += 1 }
-  }, [gymService])
+  }, [ready, gymService])
 
 
   useEffect(() => {
+    if (!ready) return
     let current = true
     if (!selectedGym) {
       setSessionTemplates([])
@@ -194,7 +232,7 @@ export function App({
       }
     })
     return () => { current = false }
-  }, [activeTab, selectedGym, workoutService, templateReload])
+  }, [ready, activeTab, selectedGym, workoutService, templateReload])
 
   async function startSession(templateId: string) {
     const session = await activeSessionService.start(templateId, selectedGym?.name)
@@ -296,7 +334,7 @@ export function App({
 
         </header>}
 
-        {settingsSensitiveView && (settingsStatus === 'loading' || settingsServiceChanged) ? (
+        {!ready ? <p role="status">Recovering local data…</p> : settingsSensitiveView && (settingsStatus === 'loading' || settingsServiceChanged) ? (
           <section id="main-view" role="tabpanel" aria-labelledby={`tab-${current.label.toLowerCase()}`}>
             <p role="status">Loading saved settings…</p>
             {isEnteringSession && <ActionButton ref={settingsExitButton} onClick={exitSession}>Exit workout</ActionButton>}

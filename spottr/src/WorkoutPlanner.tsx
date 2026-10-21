@@ -58,6 +58,7 @@ export function WorkoutPlanner({
   const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const panelReturnFocus = useRef<() => void>(() => {})
   const editorControls = useRef(new Map<string, HTMLElement>())
+  const editorControlRefs = useRef(new Map<string, (node: HTMLElement | null) => void>())
   const pendingEditorFocus = useRef<string | null>(null)
   const [savedFocusId, setSavedFocusId] = useState<string | null>(null)
   const [newExercise, setNewExercise] = useState<ExerciseDraft | null>(null)
@@ -66,10 +67,14 @@ export function WorkoutPlanner({
   const exerciseDialog = useRef<HTMLDivElement>(null)
 
   function controlRef(key: string) {
-    return (node: HTMLElement | null) => {
-      if (node) editorControls.current.set(key, node)
-      else editorControls.current.delete(key)
+    // Stable refs avoid a moved row's detach deleting another row's new binding.
+    if (!editorControlRefs.current.has(key)) {
+      editorControlRefs.current.set(key, (node: HTMLElement | null) => {
+        if (node) editorControls.current.set(key, node)
+        else editorControls.current.delete(key)
+      })
     }
+    return editorControlRefs.current.get(key)!
   }
 
   useEffect(() => {

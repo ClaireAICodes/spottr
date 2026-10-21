@@ -4,12 +4,13 @@ import { createIndexedDbExerciseRepository } from './exerciseRepository'
 import { createIndexedDbWorkoutRepository } from './workoutRepository'
 import { createIndexedDbSessionRepository } from './sessionRepository'
 import { createIndexedDbSettingsRepository } from './settingsRepository'
-import { createGymService, type GymService } from './gyms'
-import { createExerciseService, type ExerciseService } from './exercises'
-import { createWorkoutService, type WorkoutService } from './workouts'
+import { createGymService, createMemoryGymRepository, type GymService } from './gyms'
+import { createExerciseService, createMemoryExerciseRepository, type ExerciseService } from './exercises'
+import { createWorkoutService, createMemoryWorkoutRepository, type WorkoutService } from './workouts'
 import { createSessionService, createMemorySessionRepository, type SessionService } from './sessions'
-import { createSettingsService, type SettingsService } from './settings'
+import { createSettingsService, createMemorySettingsRepository, type SettingsService } from './settings'
 import { withWorkoutIntegrityLock } from './workoutIntegrity'
+import { createDatasetRecovery, type RecoveryState } from './datasetRecovery'
 
 const datasetLock = 'spottr-dataset'
 const admitted = Symbol('coordinated dataset root')
@@ -56,24 +57,25 @@ function rejectAdmitted(core: object) {
 // full exclusive ownership. No async owner or nested public-root bypass exists.
 let fallbackGeneration = 0n
 const generationKey = 'spottr-dataset-restore-generation'
-function generation(): string {
-  if (typeof navigator === 'undefined' || !navigator.locks) return String(fallbackGeneration)
+function generation(origin = true): string {
+  if (!origin || typeof navigator === 'undefined' || !navigator.locks) return String(fallbackGeneration)
   const value = localStorage.getItem(generationKey) ?? '0'
   if (!/^\d+$/.test(value)) throw new Error('Invalid dataset restore generation')
   return value
 }
-function advanceRestoreGeneration() {
-  if (typeof navigator === 'undefined' || !navigator.locks) { fallbackGeneration++; return }
+function advanceRestoreGeneration(origin = true) {
+  if (!origin || typeof navigator === 'undefined' || !navigator.locks) { fallbackGeneration++; return }
   // Called inside the exclusive Web Lock, before ANY restore write. Fail closed
   // if shared origin metadata is unavailable; never silently use a realm epoch.
   localStorage.setItem(generationKey, String(BigInt(generation()) + 1n))
 }
 // Bound completed-but-invalidated reads, not the lifetime of a pending core read.
 const ordinaryReadAttempts = 3
-async function ordinaryRead<T>(operation: () => Promise<T>): Promise<T> {
+type Admission = <T>(operation: () => Promise<T>, mode?: Mode) => Promise<T>
+async function ordinaryRead<T>(operation: () => Promise<T>, admit: Admission, observe: () => string): Promise<T> {
   for (let attemptNumber = 0; attemptNumber < ordinaryReadAttempts; attemptNumber++) {
-    const attempt = await runRoot(() => {
-      const observed = generation()
+    const attempt = await admit(() => {
+      const observed = observe()
       const pending = Promise.resolve(operation())
       // Observe immediately, but forward the original rejection unchanged.
       void pending.catch(() => undefined)
@@ -82,20 +84,20 @@ async function ordinaryRead<T>(operation: () => Promise<T>): Promise<T> {
       return Promise.resolve({ observed, pending })
     }, 'shared')
     const result = await attempt.pending
-    const valid = await runRoot(() => Promise.resolve(attempt.observed === generation()), 'shared')
+    const valid = await admit(() => Promise.resolve(attempt.observed === observe()), 'shared')
     if (valid) return result
   }
   throw new Error(`Dataset changed during all ${ordinaryReadAttempts} read attempts; please retry`)
 }
-function publish<T extends object>(core: T, ordinaryMethods: string[] = []): T {
+function publish<T extends object>(core: T, admit: Admission, observe: () => string, ordinaryMethods: string[] = []): T {
   rejectAdmitted(core)
   const entries = Object.entries(core).map(([method, fn]) => [method, (...args: unknown[]) => {
-    if (ordinaryMethods.includes(method)) return ordinaryRead(() => Promise.resolve(Reflect.apply(fn, core, args)))
-    return runRoot(async () => {
+    if (ordinaryMethods.includes(method)) return ordinaryRead(() => Promise.resolve(Reflect.apply(fn, core, args)), admit, observe)
+    return admit(async () => {
       const result = await Reflect.apply(fn, core, args)
       // Independent callbacks must not retain ownership from their capture root.
       if (method === 'captureRollback' && typeof result === 'function') {
-        return () => runRoot(() => result())
+        return () => admit(() => result())
       }
       return result
     })
@@ -110,16 +112,33 @@ function publish<T extends object>(core: T, ordinaryMethods: string[] = []): T {
  */
 export function composeDataset(input: DatasetCores = {}) {
   for (const core of Object.values(input)) if (typeof core === 'object' && core) rejectAdmitted(core)
-  const gym = input.gymService ?? createGymService(createIndexedDbGymRepository())
-  const exercise = input.exerciseService ?? createExerciseService(createIndexedDbExerciseRepository())
-  const workout = input.workoutService ?? createWorkoutService(createIndexedDbWorkoutRepository(), {
+  const persistent = Boolean(!input.gymService && !input.exerciseService && !input.workoutService && !input.sessionService && !input.settingsService)
+  const recovery = persistent ? createDatasetRecovery(() => advanceRestoreGeneration()) : undefined
+  const observe = () => generation(persistent)
+  const admit: Admission = async (operation, mode = 'exclusive') => {
+    if (!recovery) return runRoot(operation, mode)
+    if (mode === 'exclusive') return runRoot(async () => { await recovery.recover(); return operation() })
+    // Never upgrade a held shared lock or await an ordinary core's settlement.
+    // Recovery probing does not consume a completed-read generation attempt.
+    while (true) {
+      const result = await runRoot(async () => {
+        if (await recovery.inspect()) return { pendingRecovery: true as const }
+        return { pendingRecovery: false as const, value: await operation() }
+      }, 'shared')
+      if (!result.pendingRecovery) return result.value
+      await runRoot(() => recovery.recover())
+    }
+  }
+  const gym = input.gymService ?? createGymService(persistent ? createIndexedDbGymRepository() : createMemoryGymRepository())
+  const exercise = input.exerciseService ?? createExerciseService(persistent ? createIndexedDbExerciseRepository() : createMemoryExerciseRepository())
+  const workout = input.workoutService ?? createWorkoutService(persistent ? createIndexedDbWorkoutRepository() : createMemoryWorkoutRepository(), {
     gymExists: async (id) => Boolean(await gym.get(id)),
   })
   const session = input.sessionService ?? createSessionService(
-    input.workoutService || input.exerciseService ? createMemorySessionRepository() : createIndexedDbSessionRepository(),
+    persistent ? createIndexedDbSessionRepository() : createMemorySessionRepository(),
     workout, exercise, { resolveGymName: async (id) => (await gym.get(id))?.name ?? null },
   )
-  const settings = input.settingsService ?? createSettingsService(createIndexedDbSettingsRepository())
+  const settings = input.settingsService ?? createSettingsService(persistent ? createIndexedDbSettingsRepository() : createMemorySettingsRepository())
   const managedGym = { ...gym, async remove(id: string) {
     await withWorkoutIntegrityLock(async () => {
       if ((await workout.list(id)).length > 0) throw new Error('Delete linked workouts before deleting this gym')
@@ -128,19 +147,24 @@ export function composeDataset(input: DatasetCores = {}) {
   } }
   // Settings replacement does not replace the owned workout/session/gym graph.
   const roots = {
-    gymService: publish(managedGym, ['getSelected']), exerciseService: publish(exercise),
-    workoutService: publish(workout), sessionService: publish(session, ['getActive']),
+    gymService: publish(managedGym, admit, observe, ['getSelected']), exerciseService: publish(exercise, admit, observe),
+    workoutService: publish(workout, admit, observe), sessionService: publish(session, admit, observe, ['getActive']),
   }
   function withSettings(replacement: SettingsService) {
     rejectAdmitted(replacement)
+    if (persistent && replacement !== settings) throw new Error('A persistent dataset cannot bind an unowned settings service')
     const cores = { gymService: managedGym, exerciseService: exercise, workoutService: workout,
       sessionService: session, settingsService: replacement, now: input.now }
     return {
-      ...roots, settingsService: publish(replacement, ['get']),
-      exportBackup: () => runRoot(() => createSpottrBackup(cores)),
-      restoreBackup: (backup: SpottrBackup) => runRoot(() => {
-        advanceRestoreGeneration()
-        return restoreSpottrBackup(backup, cores)
+      ...roots, settingsService: publish(replacement, admit, observe, ['get']),
+      initializeOrRecover: () => runRoot(() => recovery ? recovery.recover(true) : Promise.resolve()),
+      getRecoveryState: (): RecoveryState => recovery?.getState() ?? 'ready',
+      subscribeRecovery: (listener: () => void) => recovery?.subscribe(listener) ?? (() => undefined),
+      recoveryEvidence: () => runRoot(() => recovery ? recovery.evidence() : Promise.resolve(null)),
+      exportBackup: () => admit(() => createSpottrBackup(cores)),
+      restoreBackup: (backup: SpottrBackup) => admit(() => {
+        if (!recovery) advanceRestoreGeneration(false)
+        return restoreSpottrBackup(backup, cores, recovery?.lifecycle)
       }),
     }
   }

@@ -1,4 +1,5 @@
 import type { Gym, GymRepository } from './gyms'
+import { replaceTransaction } from './replaceTransaction'
 
 export const GYM_DATABASE_VERSION = 2
 const GYMS_STORE = 'gyms'
@@ -110,14 +111,14 @@ export function createIndexedDbGymRepository(databaseName = 'spottr-v1'): GymRep
 
     async replaceAll(gyms, selectedId) {
       const database = await openDatabase()
-      const transaction = database.transaction([GYMS_STORE, SETTINGS_STORE], 'readwrite')
-      const gymsStore = transaction.objectStore(GYMS_STORE)
-      const settingsStore = transaction.objectStore(SETTINGS_STORE)
-      gymsStore.clear()
-      gyms.forEach((gym) => gymsStore.put(gym))
-      if (selectedId) settingsStore.put(selectedId, SELECTED_GYM_KEY)
-      else settingsStore.delete(SELECTED_GYM_KEY)
-      await transactionComplete(transaction)
+      await replaceTransaction(database, [GYMS_STORE, SETTINGS_STORE], transaction => {
+        const gymsStore = transaction.objectStore(GYMS_STORE)
+        const settingsStore = transaction.objectStore(SETTINGS_STORE)
+        gymsStore.clear()
+        gyms.forEach((gym) => gymsStore.put(gym))
+        if (selectedId) settingsStore.put(selectedId, SELECTED_GYM_KEY)
+        else settingsStore.delete(SELECTED_GYM_KEY)
+      })
     },
 
     async close() {
