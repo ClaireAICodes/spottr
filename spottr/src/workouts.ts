@@ -90,8 +90,9 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     if (draft.exercises.length === 0) throw new Error('Add at least one exercise')
     const seen = new Set<string>()
     const usedExerciseIds = new Set<string>()
-    const usedSetIds = new Set<string>()
     const exercises = draft.exercises.map((exercise) => {
+      // Set identities are local to their exercise occurrence, including imports.
+      const usedSetIds = new Set<string>()
       const exerciseId = exercise.exerciseId.trim()
       if (!exerciseId) throw new Error('Choose a shared exercise')
       if (seen.has(exerciseId)) throw new Error('An exercise can only appear once in a workout')

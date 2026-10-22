@@ -357,6 +357,7 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
         ) : activeTab === 0 && completedSession ? (
           <SessionSummary
             session={completedSession}
+            onSessionChange={updated => setCompletedSession(current => current?.id === updated.id ? updated : current)}
             sessionService={activeSessionService}
             settings={settings}
             restoreHistoryFocus={returnFocus === 'summary'}

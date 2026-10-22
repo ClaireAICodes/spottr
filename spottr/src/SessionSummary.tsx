@@ -22,6 +22,7 @@ export function SessionSummary({
   sessionService,
   settings,
   restoreHistoryFocus = false,
+  onSessionChange,
 }: {
   session: CompletedWorkoutSession
   onViewHistory: () => void
@@ -29,8 +30,10 @@ export function SessionSummary({
   sessionService: SessionService
   settings: AppSettings
   restoreHistoryFocus?: boolean
+  onSessionChange?: (session: CompletedWorkoutSession) => void
 }) {
   const [current, setCurrent] = useState(session)
+  useEffect(() => { setCurrent(session) }, [session])
   const [pendingSetId, setPendingSetId] = useState('')
   const [error, setError] = useState('')
   const [hasDecided, setHasDecided] = useState(false)
@@ -83,6 +86,9 @@ export function SessionSummary({
     setError('')
     try {
       const updated = await sessionService.decideFutureTarget(sessionId, exerciseId, setId, decision)
+      // Durable data belongs to the connected flow even after this view departs.
+      // Only the originating mounted view may restore decision focus below.
+      onSessionChange?.(updated)
       if (!stillOwned()) return
       setCurrent(updated)
       restoreIntent.current = originIntent

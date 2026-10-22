@@ -128,6 +128,43 @@ describe('workout template service', () => {
     expect(updated.exercises[0].sets[0].id).toBe(created.exercises[0].sets[0].id)
   })
 
+  it('preserves parent-local imported set identities through consecutive tuple target updates', async () => {
+    const template = {
+      id: 'imported', name: 'Imported rows', gymId: 'gym',
+      createdAt: '2026-10-21T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z',
+      exercises: ['first', 'second'].map(id => ({
+        id, exerciseId: `shared-${id}`,
+        sets: [
+          { id: 'local-set', kind: 'working' as const, weight: 20, reps: 8 },
+          { id: 'local-drop', kind: 'drop' as const, weight: 10, reps: 12 },
+        ],
+      })),
+    }
+    const repository = createMemoryWorkoutRepository([template])
+    const service = createWorkoutService(repository, { createId: sequentialIds() })
+    expect(await service.get(template.id)).toEqual(template)
+    const first = await service.updateSetTarget(template.id, 'first', 'local-set', { weight: 41, reps: 9 })
+    expect(first.exercises[1]).toEqual(template.exercises[1])
+    expect(first.exercises.map(({ id }) => id)).toEqual(['first', 'second'])
+    expect(first.exercises[0].sets).toEqual([
+      { ...template.exercises[0].sets[0], weight: 41, reps: 9 }, template.exercises[0].sets[1],
+    ])
+    const second = await service.updateSetTarget(template.id, 'second', 'local-set', { weight: 42, reps: 10 })
+    expect(second.exercises[0]).toEqual(first.exercises[0])
+    expect(second.exercises[1]).toEqual({ ...template.exercises[1], sets: [
+      { ...template.exercises[1].sets[0], weight: 42, reps: 10 }, template.exercises[1].sets[1],
+    ] })
+    expect(await repository.get(template.id)).toEqual(second)
+    const normalized = await service.update(template.id, { ...second, exercises: [
+      { ...second.exercises[0], sets: [second.exercises[0].sets[0], second.exercises[0].sets[0], { kind: 'drop', weight: 5, reps: 15 }] },
+      second.exercises[1],
+    ] })
+    expect(normalized.exercises[0].sets[0].id).toBe('local-set')
+    expect(new Set(normalized.exercises[0].sets.map(({ id }) => id)).size).toBe(3)
+    expect(normalized.exercises[0].sets.every(({ id }) => Boolean(id))).toBe(true)
+    expect(normalized.exercises[1]).toEqual(second.exercises[1])
+  })
+
   it('duplicates to the same or another gym with fresh nested identities', async () => {
     const service = createWorkoutService(createMemoryWorkoutRepository(), { createId: sequentialIds() })
     const original = await service.create(mixedDraft)

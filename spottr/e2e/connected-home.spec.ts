@@ -129,7 +129,10 @@ test('natural edit, reload, Resume, durable Finish, summary and contextual histo
   expect(errors).toEqual([])
 })
 
-test('imported equal local IDs: contextual decisions, genuine failed retry and held departure cannot steal focus', async ({ page }) => {
+for (const decision of ['accept', 'decline'] as const) {
+test(`imported equal local IDs: ${decision}, genuine failed retry and held departure retain results on return without focus theft`, async ({ page }) => {
+  const action = decision === 'accept' ? 'Use this target' : 'Keep current target'
+  const result = decision === 'accept' ? 'Target updated' : 'Current target kept'
   await create(page)
   await activate(page, page.getByRole('button', { name: 'Exit workout', exact: true }))
   const incoming = await backup(page)
@@ -173,11 +176,11 @@ test('imported equal local IDs: contextual decisions, genuine failed retry and h
       return original.apply(this, args as Parameters<typeof original>)
     }
   })
-  await activate(page, first.getByRole('button', { name: 'Keep current target', exact: true }))
+  await activate(page, first.getByRole('button', { name: action, exact: true }))
   await expect(page.getByRole('alert')).toBeFocused()
-  await expect(first.getByRole('button', { name: 'Keep current target', exact: true })).toBeEnabled()
-  await activate(page, first.getByRole('button', { name: 'Keep current target', exact: true }))
-  await expect(first.getByText('Current target kept', { exact: true })).toBeFocused()
+  await expect(first.getByRole('button', { name: action, exact: true })).toBeEnabled()
+  await activate(page, first.getByRole('button', { name: action, exact: true }))
+  await expect(first.getByText(result, { exact: true })).toBeFocused()
   await expect(secondOffer.getByRole('button', { name: 'Keep current target', exact: true })).toBeEnabled()
   await page.evaluate(() => {
     const original = navigator.locks.request.bind(navigator.locks)
@@ -191,7 +194,7 @@ test('imported equal local IDs: contextual decisions, genuine failed retry and h
       return Reflect.apply(original, navigator.locks, args)
     }) as typeof navigator.locks.request
   })
-  await activate(page, secondOffer.getByRole('button', { name: 'Keep current target', exact: true }))
+  await activate(page, secondOffer.getByRole('button', { name: action, exact: true }))
   await expect.poll(() => page.evaluate(() => (window as unknown as { connectedHeld?: boolean }).connectedHeld)).toBe(true)
   await activate(page, page.getByRole('button', { name: 'View history', exact: true }))
   await expect(page.getByRole('heading', { name: workout, exact: true })).toBeFocused()
@@ -204,7 +207,36 @@ test('imported equal local IDs: contextual decisions, genuine failed retry and h
       const rows = await new Promise<any[]>((yes, no) => { get.onsuccess = () => yes(get.result); get.onerror = () => no(get.error) })
       return rows.find(row => row?.endedAt)?.exercises[1].sets[0].targetDecision
     } finally { db.close() }
-  })).toBe('declined')
+  })).toBe(decision === 'accept' ? 'accepted' : 'declined')
   await expect(page.getByRole('heading', { name: workout, exact: true })).toBeFocused()
-  await capture(page, 'history-local-ids')
+  await capture(page, `history-local-ids-${decision}`)
+  await activate(page, page.getByRole('button', { name: 'Back to workout summary', exact: true }))
+  await expect(page.getByRole('button', { name: 'View history', exact: true })).toBeFocused()
+  for (const group of [first, secondOffer]) {
+    await expect(group.getByText(result, { exact: true })).toBeVisible()
+    await expect(group.getByRole('button')).toHaveCount(0)
+  }
+  await capture(page, `summary-return-${decision}`)
+  // Decisions already settled before departure must survive another round trip.
+  await activate(page, page.getByRole('button', { name: 'View history', exact: true }))
+  await activate(page, page.getByRole('button', { name: 'Back to workout summary', exact: true }))
+  await expect(page.getByRole('button', { name: 'View history', exact: true })).toBeFocused()
+  for (const group of [first, secondOffer]) await expect(group.getByText(result, { exact: true })).toBeVisible()
+  const saved = await backup(page)
+  const completed = saved.entities.completedSessions[0]
+  expect(completed.exercises.map((exercise: any) => exercise.id)).toEqual(active.exercises.map((exercise: any) => exercise.id))
+  for (const [index, exercise] of completed.exercises.entries()) {
+    expect(exercise.name).toBe('Original Row')
+    expect(exercise.sets[0]).toMatchObject({ id: active.exercises[index].sets[0].id, weight: 41 + index, targetWeight: 0, targetDecision: decision === 'accept' ? 'accepted' : 'declined' })
+    expect(saved.entities.workouts[0].exercises[index].sets[0].weight).toBe(decision === 'accept' ? 41 + index : 0)
+    expect(exercise.templateExerciseId).toBe(active.exercises[index].templateExerciseId)
+    expect(exercise.sets[0].templateSetId).toBe(active.exercises[index].sets[0].templateSetId)
+  }
+  expect(saved.entities.workouts[0].exercises).toEqual(template.exercises.map((exercise: any, index: number) => ({
+    ...exercise, sets: exercise.sets.map((set: any) => decision === 'accept' ? { ...set, weight: 41 + index } : set),
+  })))
+  expect(saved.entities.exercises).toEqual(incoming.entities.exercises)
+  expect(saved.entities.gyms).toEqual(incoming.entities.gyms)
+  expect(saved.entities.settings).toEqual(incoming.entities.settings)
 })
+}

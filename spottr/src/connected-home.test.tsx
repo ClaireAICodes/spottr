@@ -59,6 +59,45 @@ describe('connected Home journey', () => {
     expect(screen.getByRole('button', { name: 'View history' })).toHaveFocus()
   })
 
+  it.each(['accept', 'decline'] as const)('retains %s across history return before and after a held settlement', async decision => {
+    const f = await fixture()
+    const active = await f.sessionService.start(f.template.id, 'Connected Gym')
+    await f.sessionService.logSet(active.exercises[0].id, active.exercises[0].sets[0].id, { weight: 45, reps: 8 })
+    const user = userEvent.setup()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const service = { ...f.sessionService, decideFutureTarget: async (...args: Parameters<typeof f.sessionService.decideFutureTarget>) => {
+      await gate
+      return f.sessionService.decideFutureTarget(...args)
+    } }
+    render(<App {...f} sessionService={service} />)
+    await user.click(await screen.findByRole('button', { name: 'Resume Connected Workout' }))
+    await user.click(screen.getByRole('button', { name: 'Finish workout' }))
+    expect(await screen.findByRole('heading', { name: 'Workout saved' })).toHaveFocus()
+    const before = (await f.sessionService.listHistory())[0]
+    await user.click(screen.getByRole('button', { name: decision === 'accept' ? 'Use this target' : 'Keep current target' }))
+    await user.click(screen.getByRole('button', { name: 'View history' }))
+    const historyHeading = screen.getByRole('heading', { name: 'Connected Workout', level: 3 })
+    expect(historyHeading).toHaveFocus()
+    await act(async () => { release(); await gate })
+    await waitFor(async () => expect((await f.sessionService.listHistory())[0].exercises[0].sets[0].targetDecision).toBe(decision === 'accept' ? 'accepted' : 'declined'))
+    expect(historyHeading).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Back to workout summary' }))
+    expect(screen.getByRole('button', { name: 'View history' })).toHaveFocus()
+    expect(screen.getByText(decision === 'accept' ? 'Target updated' : 'Current target kept', { exact: true })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Use this target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Keep current target' })).not.toBeInTheDocument()
+    // A second round trip covers a decision already committed before departure.
+    await user.click(screen.getByRole('button', { name: 'View history' }))
+    await user.click(screen.getByRole('button', { name: 'Back to workout summary' }))
+    expect(screen.getByText(decision === 'accept' ? 'Target updated' : 'Current target kept', { exact: true })).toBeInTheDocument()
+    const saved = (await f.sessionService.listHistory())[0]
+    expect({ ...saved.exercises[0].sets[0], targetDecision: undefined }).toEqual(before.exercises[0].sets[0])
+    expect(saved.id).toBe(before.id)
+    expect(saved.summary).toEqual(before.summary)
+    expect((await f.workoutService.get(f.template.id))!.exercises[0].sets[0].weight).toBe(decision === 'accept' ? 45 : 40)
+  })
+
   it('shows persisted recent activity and opens the exact record with a contextual return', async () => {
     const f = await fixture()
     await f.sessionService.start(f.template.id, 'Connected Gym')
