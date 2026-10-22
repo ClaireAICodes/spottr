@@ -13,6 +13,7 @@ import {
 import { ActionButton, Panel, StatusPill } from './primitives'
 import { ActiveSession } from './ActiveSession'
 import { SessionHistory } from './SessionHistory'
+import { RecentActivity } from './RecentActivity'
 import { SessionSummary } from './SessionSummary'
 import { ExerciseLibrary } from './ExerciseLibrary'
 import { GymManager } from './GymManager'
@@ -101,6 +102,8 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
   const [gymStatus, setGymStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null)
   const [completedSession, setCompletedSession] = useState<CompletedWorkoutSession | null>(null)
+  const [historyEntry, setHistoryEntry] = useState<{ session: CompletedWorkoutSession; origin: 'recent' | 'summary' } | null>(null)
+  const [returnFocus, setReturnFocus] = useState<'recent' | 'summary' | null>(null)
   const [sessionTemplates, setSessionTemplates] = useState<WorkoutTemplate[]>([])
   const [isSessionOpen, setIsSessionOpen] = useState(false)
   const [sessionLoadError, setSessionLoadError] = useState('')
@@ -249,6 +252,8 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
   }
 
   function selectTab(index: number) {
+    setHistoryEntry(null)
+    setReturnFocus(null)
     settingsRetryOrigin.current = null
     setActiveTab(index)
     setIsManagingGyms(false)
@@ -354,7 +359,8 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
             session={completedSession}
             sessionService={activeSessionService}
             settings={settings}
-            onViewHistory={() => { setCompletedSession(null); selectTab(3) }}
+            restoreHistoryFocus={returnFocus === 'summary'}
+            onViewHistory={() => { setReturnFocus(null); setHistoryEntry({ session: completedSession, origin: 'summary' }); setActiveTab(3) }}
             onDone={() => setCompletedSession(null)}
           />
         ) : activeTab === 0 && isSessionOpen && activeSession ? (
@@ -381,13 +387,14 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
             templateStatus={templateStatus}
             onRetrySession={() => void loadActiveSession()}
             onRetryTemplates={() => setTemplateReload((value) => value + 1)}
+            recentActivity={<RecentActivity service={activeSessionService} settings={settings} restoreFocus={returnFocus === 'recent'} onOpen={session => { setReturnFocus(null); setHistoryEntry({ session, origin: 'recent' }); setActiveTab(3) }} />}
           />
         ) : activeTab === 1 ? (
           <ExerciseLibrary service={exerciseService} />
         ) : activeTab === 2 ? (
           <WorkoutPlanner workoutService={workoutService} gymService={gymService} exerciseService={exerciseService} settings={settings} />
         ) : activeTab === 3 ? (
-          <SessionHistory sessionService={activeSessionService} settings={settings} />
+          <SessionHistory sessionService={activeSessionService} settings={settings} entry={historyEntry?.session} onBack={historyEntry ? () => { setReturnFocus(historyEntry.origin); setHistoryEntry(null); setActiveTab(0) } : undefined} backLabel={historyEntry?.origin === 'summary' ? 'Back to workout summary' : 'Back to recent activity'} />
         ) : (
           <SettingsView
             settingsService={settingsService}
@@ -442,6 +449,7 @@ function HomeFrames({
   templateStatus,
   onRetrySession,
   onRetryTemplates,
+  recentActivity,
 }: {
   selectedGym: Gym | null
   gymStatus: 'loading' | 'ready' | 'error'
@@ -457,6 +465,7 @@ function HomeFrames({
   templateStatus: 'idle' | 'loading' | 'ready' | 'error'
   onRetrySession: () => void
   onRetryTemplates: () => void
+  recentActivity: React.ReactNode
 }) {
   const [isChoosingWorkout, setIsChoosingWorkout] = useState(false)
   const [startError, setStartError] = useState('')
@@ -470,8 +479,32 @@ function HomeFrames({
     }
   }
 
+  const resumePanel = (
+      <Panel className="resume-panel" aria-labelledby="resume-title">
+        <div className="panel-kicker">
+          <span>In progress</span>
+          <span className="live-dot">Paused</span>
+        </div>
+        <h2 id="resume-title">Resume your session</h2>
+        {sessionLoadError && <div role="alert"><p>{sessionLoadError}</p><button type="button" className="text-button" onClick={onRetrySession}>Try again</button></div>}
+        {!sessionLoadError && <>
+          <p className="session-name">{activeSession?.name ?? 'No session in progress'}</p>
+          <dl className="session-stats">
+            <div><dt>Status</dt><dd>{activeSession ? 'Saved' : 'Ready'}</dd></div>
+            <div><dt>Exercises</dt><dd>{activeSession?.exercises.length ?? 0}</dd></div>
+            <div><dt>Logged</dt><dd>{activeSession?.exercises.flatMap(({ sets }) => sets).filter(({ completedAt }) => completedAt).length ?? 0}</dd></div>
+          </dl>
+          <ActionButton ref={resumeButton} disabled={!activeSession} className="dark-action" onClick={onResume}>
+            {activeSession ? `Resume ${activeSession.name}` : 'Nothing to resume'} <ChevronRight size={18} aria-hidden="true" />
+          </ActionButton>
+          <small>{activeSession ? 'Your latest set log is stored on this device.' : 'Start a saved workout to create a session snapshot.'}</small>
+        </>}
+      </Panel>
+  )
+
   return (
     <div id="main-view" role="tabpanel" aria-labelledby="tab-home" className="home-grid">
+      {activeSession && resumePanel}
       <Panel className="welcome-panel" aria-labelledby="welcome-title">
         <div className="orb" aria-hidden="true"><Sparkles size={24} /></div>
         <StatusPill>Fresh start</StatusPill>
@@ -502,27 +535,9 @@ function HomeFrames({
         {!templateLoadError && !activeSession && selectedGym && templateStatus === 'ready' && templates.length === 0 && <small>No saved workouts for this gym yet.</small>}
       </Panel>
 
-      <Panel className="resume-panel" aria-labelledby="resume-title">
-        <div className="panel-kicker">
-          <span>In progress</span>
-          <span className="live-dot">Paused</span>
-        </div>
-        <h2 id="resume-title">Resume your session</h2>
-        {sessionLoadError && <div role="alert"><p>{sessionLoadError}</p><button type="button" className="text-button" onClick={onRetrySession}>Try again</button></div>}
-        {!sessionLoadError && <>
-          <p className="session-name">{activeSession?.name ?? 'No session in progress'}</p>
-          <dl className="session-stats">
-            <div><dt>Status</dt><dd>{activeSession ? 'Saved' : 'Ready'}</dd></div>
-            <div><dt>Exercises</dt><dd>{activeSession?.exercises.length ?? 0}</dd></div>
-            <div><dt>Logged</dt><dd>{activeSession?.exercises.flatMap(({ sets }) => sets).filter(({ completedAt }) => completedAt).length ?? 0}</dd></div>
-          </dl>
-          <ActionButton ref={resumeButton} disabled={!activeSession} className="dark-action" onClick={onResume}>
-            {activeSession ? `Resume ${activeSession.name}` : 'Nothing to resume'} <ChevronRight size={18} aria-hidden="true" />
-          </ActionButton>
-          <small>{activeSession ? 'Your latest set log is stored on this device.' : 'Start a saved workout to create a session snapshot.'}</small>
-        </>}
-      </Panel>
+      {!activeSession && resumePanel}
 
+      {recentActivity}
       <section className="principle-strip" aria-label="Product principles">
         <span>Clear</span><span>Calm</span><span>Ready</span>
       </section>

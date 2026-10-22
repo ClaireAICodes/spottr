@@ -122,6 +122,9 @@ p { color: var(--muted); line-height: 1.55; }
   gap: 22px;
 }
 
+.recent-activity { grid-column: 1 / -1; min-height: 0; overflow-wrap: anywhere; }
+.recent-activity button { min-height: 44px; padding: 10px 16px; border: 1px solid var(--ink); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font-weight: 850; cursor: pointer; }
+
 .panel {
   min-height: 390px;
   border: 1px solid var(--line);

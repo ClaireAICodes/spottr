@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Exercise, ExerciseMedia, ExerciseService } from './exercises'
 
 // Read the shared library; reference viewing never changes session or template data.
-export function ExerciseReference({ exerciseId, name, service }: { exerciseId: string; name: string; service: ExerciseService }) {
+export function ExerciseReference({ exerciseId, name, service, onResolved, occurrenceId }: { exerciseId: string; name: string; service: ExerciseService; onResolved?: (id: string, exercise: Exercise | null) => void; occurrenceId?: string }) {
   const [exercise, setExercise] = useState<Exercise | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [attempt, setAttempt] = useState(0)
@@ -11,7 +11,7 @@ export function ExerciseReference({ exerciseId, name, service }: { exerciseId: s
   const reference = useRef<HTMLDivElement>(null)
   const retry = useRef<HTMLButtonElement>(null)
   const restoreFocus = useRef<string | null>(null)
-  const regionId = `exercise-reference-${exerciseId}`
+  const regionId = `exercise-reference-${occurrenceId ?? exerciseId}`
 
   useEffect(() => {
     if (restoreFocus.current !== exerciseId || status === 'loading') return
@@ -23,14 +23,16 @@ export function ExerciseReference({ exerciseId, name, service }: { exerciseId: s
 
   useEffect(() => {
     let current = true
+
     setStatus('loading')
     service.get(exerciseId).then((loaded) => {
       if (!current) return
       setExercise(loaded)
+      onResolved?.(exerciseId, loaded)
       setStatus('ready')
     }).catch(() => { if (current) setStatus('error') })
     return () => { current = false }
-  }, [exerciseId, service, attempt])
+  }, [exerciseId, service, attempt, onResolved])
 
   function close() {
     setOpen(false)
@@ -39,7 +41,7 @@ export function ExerciseReference({ exerciseId, name, service }: { exerciseId: s
 
   if (status === 'loading') return <p role="status">Loading reference for {name}…</p>
   if (status === 'error') return <div><p role="alert">Reference for {name} could not be loaded. Your workout has not been changed.</p><button ref={retry} type="button" className="text-button" onClick={() => { restoreFocus.current = exerciseId; setAttempt((value) => value + 1) }}>Retry reference for {name}</button></div>
-  if (!exercise) return <div ref={reference} role="group" aria-label={`Reference for ${name}`} tabIndex={-1}><p>Reference for {name} is no longer in the library. You can keep logging sets.</p></div>
+  if (!exercise) return <div ref={reference} role="group" aria-label={`Reference for ${name}`} tabIndex={-1}><p>Exercise unavailable. Reference for {name} is no longer in the library. Saved session data is unchanged; you can keep logging sets.</p><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry reference for {name}</button></div>
 
   return (
     <div ref={reference} role="group" aria-label={`Reference for ${name}`} tabIndex={-1} className="exercise-reference">

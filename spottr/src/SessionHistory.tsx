@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { Panel } from './primitives'
 import type { CompletedWorkoutSession, SessionService } from './sessions'
@@ -13,13 +13,15 @@ function formatSets(count: number) {
   return `${count} ${count === 1 ? 'set' : 'sets'}`
 }
 
-export function SessionHistory({ sessionService, settings }: { sessionService: SessionService; settings: AppSettings }) {
+export function SessionHistory({ sessionService, settings, entry, onBack, backLabel }: { sessionService: SessionService; settings: AppSettings; entry?: CompletedWorkoutSession; onBack?: () => void; backLabel?: string }) {
+  const entryHeading = useRef<HTMLHeadingElement>(null)
   const [sessions, setSessions] = useState<CompletedWorkoutSession[]>([])
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(entry?.id ?? null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
 
   useEffect(() => {
     let current = true
+    if (entry) { setSessions([entry]); setStatus('ready'); return }
     setStatus('loading')
     sessionService.listHistory().then((history) => {
       if (!current) return
@@ -29,13 +31,15 @@ export function SessionHistory({ sessionService, settings }: { sessionService: S
       if (current) setStatus('error')
     })
     return () => { current = false }
-  }, [sessionService])
+  }, [sessionService, entry])
+  useEffect(() => { if (entry && status === 'ready') entryHeading.current?.focus() }, [entry?.id, status])
 
   return (
     <section id="main-view" role="tabpanel" aria-labelledby="tab-history" className="session-history">
       <div className="section-heading">
         <div><p className="eyebrow">Saved locally</p><h2>Workout history</h2><p>Newest sessions appear first.</p></div>
       </div>
+      {onBack && <button type="button" className="text-button" onClick={onBack}>{backLabel}</button>}
       {status === 'loading' && <p role="status">Loading workout history…</p>}
       {status === 'error' && <p role="alert" className="form-message error-copy">Your workout history could not be loaded. Your saved data has not been changed.</p>}
       {status === 'ready' && sessions.length === 0 && <div className="state-message"><h3>No completed workouts yet</h3><p>Finish a workout to keep its set-by-set record here.</p></div>}
@@ -47,10 +51,10 @@ export function SessionHistory({ sessionService, settings }: { sessionService: S
               <div className="history-card-heading">
                 <div>
                   <p className="eyebrow"><time dateTime={session.endedAt}>{new Date(session.endedAt).toLocaleString()}</time></p>
-                  <h3>{session.name}</h3>
+                  <h3 ref={entry ? entryHeading : undefined} tabIndex={-1}>{session.name}</h3>
                   <p>{session.gymName} · {formatWeight(session.summary.volume, settings.weightUnit)} · {formatDuration(session.summary.durationSeconds)}</p>
                 </div>
-                <button type="button" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : session.id)}>
+                <button type="button" aria-label={`${expanded ? 'Hide details' : 'View details'} for ${session.name} at ${session.gymName} completed ${new Date(session.endedAt).toLocaleString()}`} aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : session.id)}>
                   {expanded ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
                   {expanded ? 'Hide details' : 'View details'}
                 </button>

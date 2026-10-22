@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Dumbbell, Flag } from 'lucide-react'
 import { ActionButton, Panel } from './primitives'
 import { ExerciseReference } from './ExerciseReference'
-import type { ExerciseService } from './exercises'
+import type { Exercise, ExerciseService } from './exercises'
 import type { CompletedWorkoutSession, SessionService, WorkoutSession } from './sessions'
 import { elapsedSetSeconds } from './sessions'
 import { displayWeight, storedWeight, type AppSettings } from './settings'
@@ -38,6 +38,12 @@ export function ActiveSession({
   settings: AppSettings
 }) {
   const [session, setSession] = useState(initialSession)
+  const [shared, setShared] = useState<Record<string, Exercise | null>>({})
+  const resolveShared = useCallback((id: string, exercise: Exercise | null) => {
+    setShared(current => current[id] === exercise ? current : { ...current, [id]: exercise })
+  }, [])
+  // Presentation only: never write shared names into the persisted session snapshot.
+  const displayExercises = session.exercises.map(exercise => ({ ...exercise, name: shared[exercise.exerciseId]?.name ?? exercise.name }))
   const [currentSetId, setCurrentSetId] = useState(() => {
     const sets = initialSession.exercises.flatMap(exercise => exercise.sets.map(set => ({ ...set, key: setKey(exercise.id, set.id) })))
     return (sets.find(set => set.timing && !set.completedAt && !set.skippedAt) ?? sets.find(set => !set.completedAt && !set.skippedAt))?.key
@@ -192,13 +198,13 @@ export function ActiveSession({
       }, settings.restTimerEnabled ? settings.restSeconds : undefined, session.id)
       setSession(updated)
       onSessionChange(updated)
-      const loggedSet = updated.exercises.flatMap(({ sets }) => sets).find(({ id }) => id === setId)
+      const loggedSet = updated.exercises.find(exercise => exercise.id === exerciseId)?.sets.find(({ id }) => id === setId)
       const messages: string[] = []
       if (settings.prCelebrations && loggedSet?.personalRecords?.includes('weight')) messages.push('New weight PR')
       if (settings.prCelebrations && loggedSet?.personalRecords?.includes('set-volume')) messages.push('New set volume PR')
       if (settings.restTimerEnabled) messages.push(`Suggested rest: ${settings.restSeconds} seconds`)
       const occurrence = updated.exercises.find(exercise => exercise.id === exerciseId)!
-      messages.unshift(`Logged ${occurrence.name} set ${occurrence.sets.findIndex(set => set.id === setId) + 1}: ${draft.weight} ${settings.weightUnit}, ${draft.reps} reps`)
+      messages.unshift(`Logged ${shared[occurrence.exerciseId]?.name ?? occurrence.name} set ${occurrence.sets.findIndex(set => set.id === setId) + 1}: ${draft.weight} ${settings.weightUnit}, ${draft.reps} reps`)
       const message = messages.join(' · ')
       setFeedback((current) => message ? { message, sequence: (current?.sequence ?? 0) + 1 } : null)
       const next = updated.exercises.flatMap(exercise => exercise.sets.map(set => ({ ...set, key: setKey(exercise.id, set.id) }))).find(set => !set.completedAt && !set.skippedAt)
@@ -342,7 +348,7 @@ export function ActiveSession({
         </div>
       )}
       <div className="session-exercises">
-        {session.exercises.map((exercise, exerciseIndex) => (
+        {displayExercises.map((exercise, exerciseIndex) => (
           <Panel key={exercise.id} className="session-exercise" aria-labelledby={`session-exercise-${exercise.id}`}>
             <div className="session-exercise-heading">
               <div>
@@ -358,7 +364,7 @@ export function ActiveSession({
                 </div>
               )}
             </div>
-            <ExerciseReference exerciseId={exercise.exerciseId} name={exercise.name} service={exerciseService} />
+            <ExerciseReference exerciseId={exercise.exerciseId} name={exercise.name} service={exerciseService} onResolved={resolveShared} occurrenceId={exercise.id} />
             <ActionButton
               id={`exercise-availability-${exercise.id}`}
               disabled={pendingExerciseId !== null || pendingSetIds.size > 0 || isFinishing || exercise.sets.every((set) => set.completedAt)}
@@ -369,7 +375,7 @@ export function ActiveSession({
             </ActionButton>
             <ol className="session-set-list">
               {exercise.sets.map((set, index) => {
-                const label = `${exercise.name}${session.exercises.filter(item => item.name === exercise.name).length > 1 ? ` exercise ${exerciseIndex + 1}` : ''} set ${index + 1}`
+                const label = `${exercise.name}${displayExercises.filter(item => item.name === exercise.name).length > 1 ? ` exercise ${exerciseIndex + 1}` : ''} set ${index + 1}`
                 const key = setKey(exercise.id, set.id)
                 const completed = Boolean(set.completedAt)
                 const skipped = Boolean(set.skippedAt)
