@@ -154,8 +154,8 @@ export function GymManager({ service, onClose, onSelectionChange }: GymManagerPr
 
   function captureLocation() {
     if (!editor) return
-    if (!navigator.geolocation) {
-      setLocationMessage('Location is unavailable. Enter an address manually instead.')
+    if (!window.isSecureContext || !navigator.geolocation) {
+      setLocationMessage('Location unavailable. Enter details manually.')
       return
     }
     setIsLocating(true)
@@ -164,6 +164,13 @@ export function GymManager({ service, onClose, onSelectionChange }: GymManagerPr
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         if (requestId !== locationRequest.current) return
+        if (!Number.isFinite(coords.latitude) || Math.abs(coords.latitude) > 90
+          || !Number.isFinite(coords.longitude) || Math.abs(coords.longitude) > 180
+          || !Number.isFinite(coords.accuracy) || coords.accuracy < 0) {
+          setLocationMessage('Location unavailable. Enter details manually.')
+          setIsLocating(false)
+          return
+        }
         setEditor((current) => current ? {
           ...current,
           location: { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy },
@@ -173,10 +180,10 @@ export function GymManager({ service, onClose, onSelectionChange }: GymManagerPr
       },
       () => {
         if (requestId !== locationRequest.current) return
-        setLocationMessage('Location permission was not granted. Enter an address manually instead.')
+        setLocationMessage('Location unavailable. Enter details manually.')
         setIsLocating(false)
       },
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
     )
   }
 
@@ -305,13 +312,13 @@ export function GymManager({ service, onClose, onSelectionChange }: GymManagerPr
             <label>Gym name<input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} autoFocus required disabled={isSaving} /></label>
             <label>Address (optional)<textarea value={editor.address} onChange={(event) => setEditor({ ...editor, address: event.target.value })} rows={2} disabled={isSaving} /></label>
             <button className="location-button" type="button" onClick={captureLocation} disabled={isLocating || isSaving}>
-              <LocateFixed size={18} aria-hidden="true" /> {isLocating ? 'Finding location…' : editor.location ? 'Update current location' : 'Use current location'}
+              <LocateFixed size={18} aria-hidden="true" /> {isLocating ? 'Locating…' : locationMessage === 'Location unavailable. Enter details manually.' ? 'Retry location' : editor.location ? 'Update current location' : 'Use current location'}
             </button>
             {locationMessage && <p className="form-message" role="alert">{locationMessage}</p>}
             {error && <p className="form-message error-copy" role="alert">{error}</p>}
             <div className="form-actions">
               <button type="button" className="text-button" onClick={closeEditor} disabled={isSaving}>Cancel</button>
-              <ActionButton type="submit" disabled={isSaving || isLocating}>{isSaving ? 'Saving…' : editor.gym ? 'Save changes' : 'Save gym'}</ActionButton>
+              <ActionButton type="submit" disabled={isSaving}>{isSaving ? 'Saving…' : editor.gym ? 'Save changes' : 'Save gym'}</ActionButton>
             </div>
           </form>
         </Panel>

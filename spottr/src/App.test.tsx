@@ -94,6 +94,7 @@ describe('gym management journey', () => {
   it('falls back to manual entry when location permission is denied', async () => {
     const user = userEvent.setup()
     const service = createGymService(createMemoryGymRepository())
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
     Object.defineProperty(navigator, 'geolocation', {
       configurable: true,
       value: {
@@ -108,7 +109,7 @@ describe('gym management journey', () => {
     await user.click(screen.getByRole('button', { name: /add gym/i }))
     await user.click(screen.getByRole('button', { name: /use current location/i }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/enter an address manually/i)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Location unavailable. Enter details manually.')
     expect(screen.getByLabelText(/address/i)).toBeEnabled()
   })
 
@@ -116,6 +117,7 @@ describe('gym management journey', () => {
     const user = userEvent.setup()
     const service = createGymService(createMemoryGymRepository())
     let resolveLocation: PositionCallback = () => undefined
+    Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
     Object.defineProperty(navigator, 'geolocation', {
       configurable: true,
       value: {
@@ -127,7 +129,9 @@ describe('gym management journey', () => {
     await user.click(await screen.findByRole('button', { name: /manage gyms/i }))
     await user.click(screen.getByRole('button', { name: /add gym/i }))
     await user.click(screen.getByRole('button', { name: /use current location/i }))
-    expect(screen.getByRole('button', { name: /save gym/i })).toBeDisabled()
+    // UX-03 explicitly permits manual saving while optional GPS is pending.
+    expect(screen.getByRole('button', { name: /save gym/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Locating/i })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: /cancel/i }))
     await user.click(screen.getByRole('button', { name: /add gym/i }))
     act(() => resolveLocation({
