@@ -74,7 +74,8 @@ test('keeps accurate readiness after cached offline reload and completes a saved
   await expect(page.getByRole('heading', { name: 'Workout saved' })).toBeVisible()
 
   await page.reload()
-  await page.getByRole('tab', { name: 'History' }).click()
+  await page.getByRole('tab', { name: 'Workouts' }).click()
+  await page.getByRole('button', { name: 'History', exact: true }).click()
   const savedSession = page.getByRole('article', { name: 'Offline Strength at Offline Gym' })
   await expect(savedSession).toContainText('255 kg')
   await savedSession.getByRole('button', { name: 'View details' }).click()

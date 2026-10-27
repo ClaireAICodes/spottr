@@ -84,11 +84,12 @@ export function createIndexedDbExerciseRepository(databaseName = 'spottr-v1-exer
       const request = database.transaction(EXERCISES_STORE).objectStore(EXERCISES_STORE).get(id)
       return ((await requestResult(request)) as Exercise | undefined) ?? null
     },
-    async save(exercise) {
+    async save(exercise, createOnly) {
       const database = await openDatabase()
       const transaction = database.transaction(EXERCISES_STORE, 'readwrite')
       const store = transaction.objectStore(EXERCISES_STORE)
       const existing = await requestResult(store.get(exercise.id)) as Exercise | undefined
+      if (createOnly && existing) { transaction.abort(); throw new Error('Exercise already exists') }
       if (!existing) {
         try { assertExerciseMediaCount([exercise]) } catch (error) {
           transaction.abort()

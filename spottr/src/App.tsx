@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   Activity,
-  BarChart3,
+  MapPin,
   CalendarDays,
   ChevronRight,
   Dumbbell,
@@ -18,6 +18,7 @@ import { SessionSummary } from './SessionSummary'
 import { ExerciseLibrary } from './ExerciseLibrary'
 import { GymManager } from './GymManager'
 import { WorkoutPlanner } from './WorkoutPlanner'
+import { AUTHORING_DRAFT_ID } from './workoutDrafts'
 import { SettingsView } from './SettingsView'
 import { useInstallPrompt } from './InstallPanel'
 import type { ExerciseService } from './exercises'
@@ -27,12 +28,13 @@ import type { WorkoutService, WorkoutTemplate } from './workouts'
 import { DEFAULT_SETTINGS, type AppSettings, type SettingsService } from './settings'
 import { composeDataset, type Dataset } from './datasetCoordinator'
 import { recoveryDiagnostic } from './recoveryDiagnostic'
+import { parseRoute, formatRoute, type Route } from './navigation'
 
 const tabs = [
   { label: 'Home', icon: Home },
   { label: 'Exercises', icon: Dumbbell },
   { label: 'Workouts', icon: CalendarDays },
-  { label: 'History', icon: BarChart3 },
+  { label: 'Gyms', icon: MapPin },
   { label: 'Settings', icon: SlidersHorizontal },
 ] as const
 
@@ -65,7 +67,7 @@ export function App({
     ? coreDataset.withSettings(injectedSettingsService)
     : coreDataset, [coreDataset, injectedSettingsService])
   const recoveryState = useSyncExternalStore(dataset.subscribeRecovery, dataset.getRecoveryState)
-  const [activeTab, setActiveTab] = useState(0)
+  const [activeTab, setActiveTab] = useState(() => { const route = parseRoute(window.location.hash); return ['home', 'exercises', 'workouts', 'gyms', 'settings'].indexOf(route.kind === 'history' ? 'workouts' : route.kind) })
   const [recoveryError, setRecoveryError] = useState('')
   const retry = () => { setRecoveryError(''); void dataset.initializeOrRecover().catch(error => setRecoveryError(String(error))) }
   useEffect(() => {
@@ -96,6 +98,53 @@ export function App({
 
 function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<Dataset, 'withSettings'>; ready: boolean; activeTab: number; setActiveTab: (tab: number) => void }) {
   const { gymService, exerciseService, workoutService, settingsService, sessionService: activeSessionService } = dataset
+  const [route, setRoute] = useState<Route>(() => parseRoute(window.location.hash))
+  const { draftOwner } = dataset
+  const draft = useSyncExternalStore(draftOwner.subscribe, draftOwner.getSnapshot)
+  const [draftRecovery, setDraftRecovery] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [draftRetry, setDraftRetry] = useState(0)
+  const [, refreshDraftStatus] = useState(0)
+  useEffect(() => draftOwner.subscribe(() => refreshDraftStatus(n => n + 1)), [draftOwner])
+  useEffect(() => {
+    if (!ready) return
+    let current = true
+    setDraftRecovery('loading')
+    draftOwner.recover(AUTHORING_DRAFT_ID, dataset.getGeneration()).then(() => {
+      if (current) setDraftRecovery('ready')
+    }).catch(() => { if (current) setDraftRecovery('error') })
+    return () => { current = false }
+  }, [dataset, draftOwner, ready, draftRetry])
+  useEffect(() => {
+    const flush = () => { if (draftOwner.getSnapshot()) void draftOwner.flushDraft(AUTHORING_DRAFT_ID) }
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (draftOwner.getSnapshot()) { flush(); event.preventDefault(); event.returnValue = '' }
+    }
+    window.addEventListener('pagehide', flush)
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => { window.removeEventListener('pagehide', flush); window.removeEventListener('beforeunload', beforeUnload) }
+  }, [draftOwner])
+  function navigate(next: Route) {
+    if (draftOwner.getSnapshot()) void draftOwner.flushDraft(AUTHORING_DRAFT_ID)
+    const hash = formatRoute(next)
+    if (window.location.hash !== hash) window.history.pushState(null, '', hash)
+    setRoute(next)
+    setActiveTab(['home', 'exercises', 'workouts', 'gyms', 'settings'].indexOf(next.kind === 'history' ? 'workouts' : next.kind))
+  }
+  useEffect(() => {
+    const sync = () => {
+      const next = parseRoute(window.location.hash)
+      const hash = formatRoute(next)
+      if (window.location.hash !== hash) window.history.replaceState(null, '', hash)
+      if (draftOwner.getSnapshot()) void draftOwner.flushDraft(AUTHORING_DRAFT_ID)
+      setRoute(next)
+      setActiveTab(['home', 'exercises', 'workouts', 'gyms', 'settings'].indexOf(next.kind === 'history' ? 'workouts' : next.kind))
+    }
+    const canonical = formatRoute(parseRoute(window.location.hash))
+    if (window.location.hash !== canonical) window.history.replaceState(null, '', canonical)
+    window.addEventListener('hashchange', sync)
+    window.addEventListener('popstate', sync)
+    return () => { window.removeEventListener('hashchange', sync); window.removeEventListener('popstate', sync) }
+  }, [setActiveTab])
   const managedGymService = gymService
   const [isManagingGyms, setIsManagingGyms] = useState(false)
   const [selectedGym, setSelectedGym] = useState<Gym | null>(null)
@@ -255,7 +304,7 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
     setHistoryEntry(null)
     setReturnFocus(null)
     settingsRetryOrigin.current = null
-    setActiveTab(index)
+    navigate({ kind: ['home', 'exercises', 'workouts', 'gyms', 'settings'][index] as 'home' | 'exercises' | 'workouts' | 'gyms' | 'settings' })
     setIsManagingGyms(false)
     tabRefs.current[index]?.focus()
   }
@@ -288,7 +337,7 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
   }
 
   const current = tabs[activeTab]
-  const isEnteringSession = activeTab === 0 && isSessionOpen && Boolean(activeSession) && !completedSession
+  const isEnteringSession = isSessionOpen && Boolean(activeSession) && !completedSession
   const isFocusedSession = isEnteringSession && settingsStatus === 'ready'
   useEffect(() => {
     if (isEnteringSession && settingsStatus !== 'ready') settingsExitButton.current?.focus()
@@ -316,9 +365,9 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
     target.focus()
     if (document.activeElement === target) setRestoreResumeFocus(false)
   }, [restoreResumeFocus, isFocusedSession, activeSession])
-  const pageTitle = isManagingGyms ? 'Gyms' : current.label
+  const pageTitle = isManagingGyms ? 'Gyms' : route.kind === 'history' ? 'History' : current.label
   const settingsSensitiveView = activeTab === 2
-    || activeTab === 3
+    || route.kind === 'history'
     || (activeTab === 0 && Boolean(completedSession || (isSessionOpen && activeSession)))
 
   return (
@@ -339,7 +388,11 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
 
         </header>}
 
-        {!ready ? <p role="status">Recovering local data…</p> : settingsSensitiveView && (settingsStatus === 'loading' || settingsServiceChanged) ? (
+        {draft && <div className="form-message" role="status">
+          {draftOwner.getPersistenceResult()?.status === 'saved' ? 'Draft saved on this device. Save workout before export.' : draftOwner.getPersistenceResult()?.status === 'conflict' ? 'Draft conflict. Your changes are still here; another tab has newer work.' : draftOwner.getPersistenceResult()?.status === 'storage_error' ? 'Could not save draft. Your changes are still here.' : 'Draft changes not yet saved on this device.'}
+          <button type="button" onClick={() => void draftOwner.flushDraft(AUTHORING_DRAFT_ID)}>Save draft / Retry</button>
+        </div>}
+        {!ready || draftRecovery === 'loading' ? <p role="status">Recovering local data…</p> : draftRecovery === 'error' ? <div role="alert">Could not recover your workout draft. No blank editor has been initialized. <button onClick={() => setDraftRetry(n => n + 1)}>Retry draft recovery</button></div> : settingsSensitiveView && (settingsStatus === 'loading' || settingsServiceChanged) ? (
           <section id="main-view" role="tabpanel" aria-labelledby={`tab-${current.label.toLowerCase()}`}>
             <p role="status">Loading saved settings…</p>
             {isEnteringSession && <ActionButton ref={settingsExitButton} onClick={exitSession}>Exit workout</ActionButton>}
@@ -361,15 +414,22 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
             sessionService={activeSessionService}
             settings={settings}
             restoreHistoryFocus={returnFocus === 'summary'}
-            onViewHistory={() => { setReturnFocus(null); setHistoryEntry({ session: completedSession, origin: 'summary' }); setActiveTab(3) }}
+            onViewHistory={() => { setReturnFocus(null); setHistoryEntry({ session: completedSession, origin: 'summary' }); navigate({ kind: 'history', sessionId: completedSession.id, returnTo: 'home' }) }}
             onDone={() => setCompletedSession(null)}
           />
-        ) : activeTab === 0 && isSessionOpen && activeSession ? (
+        ) : isSessionOpen && activeSession ? (
           <ActiveSession initialSession={activeSession} sessionService={activeSessionService} exerciseService={exerciseService} settings={settings} onSessionChange={setActiveSession} onComplete={completeSession} onExit={exitSession} />
-        ) : activeTab === 0 && isManagingGyms ? (
+        ) : route.kind === 'history' ? (
+          <SessionHistory sessionService={activeSessionService} settings={settings}
+            sessionId={route.sessionId}
+            entry={historyEntry && historyEntry.session.id === route.sessionId ? historyEntry.session : undefined}
+            onBack={() => { setReturnFocus(historyEntry?.origin ?? (route.returnTo === 'home' ? 'recent' : null)); setHistoryEntry(null); navigate({ kind: route.returnTo }) }}
+            backLabel={historyEntry?.origin === 'summary' ? 'Back to workout summary' : route.returnTo === 'home' ? 'Back to recent activity' : 'Back to workouts'}
+            onOpen={session => navigate({ kind: 'history', sessionId: session.id, returnTo: route.returnTo })} />
+        ) : activeTab === 3 || (activeTab === 0 && isManagingGyms) ? (
           <GymManager
             service={managedGymService}
-            onClose={() => setIsManagingGyms(false)}
+            onClose={() => { setIsManagingGyms(false); navigate({ kind: 'home' }) }}
             onSelectionChange={loadSelectedGym}
           />
         ) : activeTab === 0 ? (
@@ -388,14 +448,15 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
             templateStatus={templateStatus}
             onRetrySession={() => void loadActiveSession()}
             onRetryTemplates={() => setTemplateReload((value) => value + 1)}
-            recentActivity={<RecentActivity service={activeSessionService} settings={settings} restoreFocus={returnFocus === 'recent'} onOpen={session => { setReturnFocus(null); setHistoryEntry({ session, origin: 'recent' }); setActiveTab(3) }} />}
+            recentActivity={<RecentActivity service={activeSessionService} settings={settings} restoreFocus={returnFocus === 'recent'} onOpen={session => { setReturnFocus(null); setHistoryEntry({ session, origin: 'recent' }); navigate({ kind: 'history', sessionId: session.id, returnTo: 'home' }) }} />}
           />
         ) : activeTab === 1 ? (
           <ExerciseLibrary service={exerciseService} />
         ) : activeTab === 2 ? (
-          <WorkoutPlanner workoutService={workoutService} gymService={gymService} exerciseService={exerciseService} settings={settings} />
-        ) : activeTab === 3 ? (
-          <SessionHistory sessionService={activeSessionService} settings={settings} entry={historyEntry?.session} onBack={historyEntry ? () => { setReturnFocus(historyEntry.origin); setHistoryEntry(null); setActiveTab(0) } : undefined} backLabel={historyEntry?.origin === 'summary' ? 'Back to workout summary' : 'Back to recent activity'} />
+          <>
+            <ActionButton onClick={() => navigate({ kind: 'history', returnTo: 'workouts' })}>History</ActionButton>
+            <WorkoutPlanner draftOwner={draftOwner} datasetGeneration={dataset.getGeneration()} workoutService={workoutService} gymService={gymService} exerciseService={exerciseService} settings={settings} />
+          </>
         ) : (
           <SettingsView
             settingsService={settingsService}

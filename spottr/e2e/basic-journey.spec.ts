@@ -4,7 +4,7 @@ for (const width of [390, 834, 1440]) {
   test(`canonical sections and connected skip-return workout at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 })
     await page.goto('./')
-    await expect(page.getByRole('tab')).toHaveText(['Home', 'Exercises', 'Workouts', 'History', 'Settings'])
+    await expect(page.getByRole('tab')).toHaveText(['Home', 'Exercises', 'Workouts', 'Gyms', 'Settings'])
     // Omission is an authorized alternative to an actual current date/profile feature.
     await expect(page.locator('.topbar .eyebrow')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Open profile' })).toHaveCount(0)
@@ -56,7 +56,8 @@ for (const width of [390, 834, 1440]) {
     await expect(page.getByText('0 sets skipped', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'View history', exact: true }).click()
     await page.reload()
-    await page.getByRole('tab', { name: 'History', exact: true }).click()
+    await page.getByRole('tab', { name: 'Workouts', exact: true }).click()
+    await page.getByRole('button', { name: 'History', exact: true }).click()
     const history = page.getByRole('article', { name: 'Journey Strength at Journey Gym' })
     await expect(history).toContainText('380 kg')
     await history.getByRole('button', { name: 'View details' }).click()

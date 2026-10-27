@@ -40,7 +40,7 @@ export function assertExerciseMediaCount(exercises: Exercise[]) {
 export interface ExerciseRepository {
   list(): Promise<Exercise[]>
   get(id: string): Promise<Exercise | null>
-  save(exercise: Exercise): Promise<void>
+  save(exercise: Exercise, createOnly?: boolean): Promise<void>
   addMedia(exerciseId: string, media: ExerciseMedia, totalLimit: number, signal?: AbortSignal): Promise<void>
   moveMedia(exerciseId: string, mediaId: string, direction: 'up' | 'down'): Promise<void>
   removeMedia(exerciseId: string, mediaId: string): Promise<void>
@@ -110,18 +110,27 @@ export function createExerciseService(repository: ExerciseRepository, options: E
         .sort((left, right) => left.name.localeCompare(right.name))
     },
 
-    async create(draft: ExerciseDraft) {
+    async create(draft: ExerciseDraft, operationId?: string) {
       return mutate(async () => {
+        if (operationId) {
+          const committed = await repository.get(operationId)
+          if (committed) return withMedia(committed)
+        }
         const normalized = normalize(draft)
         const timestamp = now()
         const exercise: Exercise = {
-          id: createId(),
+          id: operationId ?? createId(),
           ...normalized,
           createdAt: timestamp,
           updatedAt: timestamp,
           media: [],
         }
-        await repository.save(exercise)
+        try { await repository.save(exercise, !!operationId) }
+        catch (error) {
+          const committed = operationId ? await repository.get(operationId) : null
+          if (committed) return withMedia(committed)
+          throw error
+        }
         return exercise
       })
     },
@@ -135,12 +144,16 @@ export function createExerciseService(repository: ExerciseRepository, options: E
       })
     },
 
-    async duplicate(id: string, name?: string) {
+    async duplicate(id: string, name?: string, operationId?: string) {
       return mutate(async () => {
+        if (operationId) {
+          const committed = await repository.get(operationId)
+          if (committed) return withMedia(committed)
+        }
         const current = await requireExercise(id)
         const timestamp = now()
         const exercise: Exercise = {
-          id: createId(),
+          id: operationId ?? createId(),
           ...normalize({
             name: name ?? `${current.name} variation`,
             muscleGroup: current.muscleGroup,
@@ -151,7 +164,12 @@ export function createExerciseService(repository: ExerciseRepository, options: E
           updatedAt: timestamp,
           media: [],
         }
-        await repository.save(exercise)
+        try { await repository.save(exercise, !!operationId) }
+        catch (error) {
+          const committed = operationId ? await repository.get(operationId) : null
+          if (committed) return withMedia(committed)
+          throw error
+        }
         return exercise
       })
     },
@@ -348,8 +366,9 @@ export function createMemoryExerciseRepository(initialExercises: Exercise[] = []
       const exercise = exercises.get(id)
       return exercise ? cloneExercise(exercise) : null
     },
-    async save(exercise) {
+    async save(exercise, createOnly) {
       const current = exercises.get(exercise.id)
+      if (createOnly && current) throw new Error('Exercise already exists')
       if (!current) assertExerciseMediaCount([exercise])
       exercises.set(exercise.id, cloneExercise({ ...exercise, media: current?.media ?? exercise.media }))
     },

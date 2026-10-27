@@ -13,7 +13,7 @@ function formatSets(count: number) {
   return `${count} ${count === 1 ? 'set' : 'sets'}`
 }
 
-export function SessionHistory({ sessionService, settings, entry, onBack, backLabel }: { sessionService: SessionService; settings: AppSettings; entry?: CompletedWorkoutSession; onBack?: () => void; backLabel?: string }) {
+export function SessionHistory({ sessionService, settings, entry, onBack, backLabel, sessionId, onOpen }: { sessionService: SessionService; settings: AppSettings; entry?: CompletedWorkoutSession; onBack?: () => void; backLabel?: string; sessionId?: string; onOpen?: (session: CompletedWorkoutSession) => void }) {
   const entryHeading = useRef<HTMLHeadingElement>(null)
   const [sessions, setSessions] = useState<CompletedWorkoutSession[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(entry?.id ?? null)
@@ -25,17 +25,18 @@ export function SessionHistory({ sessionService, settings, entry, onBack, backLa
     setStatus('loading')
     sessionService.listHistory().then((history) => {
       if (!current) return
-      setSessions(history)
+      setSessions(sessionId ? history.filter(session => session.id === sessionId) : history)
+      setExpandedId(sessionId ?? null)
       setStatus('ready')
     }).catch(() => {
       if (current) setStatus('error')
     })
     return () => { current = false }
-  }, [sessionService, entry])
+  }, [sessionService, entry, sessionId])
   useEffect(() => { if (entry && status === 'ready') entryHeading.current?.focus() }, [entry?.id, status])
 
   return (
-    <section id="main-view" role="tabpanel" aria-labelledby="tab-history" className="session-history">
+    <section id="main-view" role="tabpanel" aria-label="Workout history" className="session-history">
       <div className="section-heading">
         <div><p className="eyebrow">Saved locally</p><h2>Workout history</h2><p>Newest sessions appear first.</p></div>
       </div>
@@ -54,7 +55,7 @@ export function SessionHistory({ sessionService, settings, entry, onBack, backLa
                   <h3 ref={entry ? entryHeading : undefined} tabIndex={-1}>{session.name}</h3>
                   <p>{session.gymName} · {formatWeight(session.summary.volume, settings.weightUnit)} · {formatDuration(session.summary.durationSeconds)}</p>
                 </div>
-                <button type="button" aria-label={`${expanded ? 'Hide details' : 'View details'} for ${session.name} at ${session.gymName} completed ${new Date(session.endedAt).toLocaleString()}`} aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : session.id)}>
+                <button type="button" aria-label={`${expanded ? 'Hide details' : 'View details'} for ${session.name} at ${session.gymName} completed ${new Date(session.endedAt).toLocaleString()}`} aria-expanded={expanded} onClick={() => { if (onOpen && !sessionId) onOpen(session); else setExpandedId(expanded ? null : session.id) }}>
                   {expanded ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
                   {expanded ? 'Hide details' : 'View details'}
                 </button>

@@ -2,6 +2,7 @@
 // published root exposes replay; callers hold exclusive dataset ownership.
 import { assertStoredBackup, type SpottrBackup, importExercise } from './backup'
 import { DEFAULT_SETTINGS } from './settings'
+import { WORKOUT_DATABASE_VERSION, UPDATE_OUTCOMES_STORE } from './workoutRepository'
 
 type Row = { key: string; value: unknown }
 type StoreSnapshot = { name: string; rows: Row[] }
@@ -18,9 +19,15 @@ export const persistentStorageIdentity = JSON.stringify(layout)
 async function open(index: number) {
   const spec = layout[index]
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(spec.name, spec.version)
+    // The logical replay/backup layout and its identity remain unchanged.
+    // Workout retry evidence is a physical local-only store, not saved data.
+    const workoutStorage = spec.name === 'spottr-v1-workouts'
+    const request = indexedDB.open(spec.name, workoutStorage ? WORKOUT_DATABASE_VERSION : spec.version)
     let blocked = false
     request.onupgradeneeded = () => {
+      if (workoutStorage && !request.result.objectStoreNames.contains(UPDATE_OUTCOMES_STORE)) {
+        request.result.createObjectStore(UPDATE_OUTCOMES_STORE, { keyPath: 'id' })
+      }
       for (const [name, keyPath] of spec.stores) {
         if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, keyPath ? { keyPath } : undefined)
       }
@@ -31,7 +38,8 @@ async function open(index: number) {
       const db = request.result
       if (blocked) { db.close(); return }
       try {
-        if (db.objectStoreNames.length !== spec.stores.length) throw new Error('Unexpected recovery storage schema')
+        if (db.objectStoreNames.length !== spec.stores.length + (workoutStorage ? 1 : 0)) throw new Error('Unexpected recovery storage schema')
+        if (workoutStorage && db.transaction(UPDATE_OUTCOMES_STORE).objectStore(UPDATE_OUTCOMES_STORE).keyPath !== 'id') throw new Error('Unexpected local outcome schema')
         const tx = db.transaction(spec.stores.map(([name]) => name))
         for (const [name, keyPath] of spec.stores) if (tx.objectStore(name).keyPath !== keyPath) throw new Error('Unexpected recovery key schema')
         resolve(db)

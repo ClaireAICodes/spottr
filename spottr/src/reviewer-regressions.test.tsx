@@ -103,6 +103,7 @@ describe('reviewer regressions', () => {
     const firstAnnouncement = await screen.findByRole('status')
     expect(firstAnnouncement).toHaveTextContent('Suggested rest: 90 seconds')
     await user.click(screen.getByRole('button', { name: /log squat set 2/i }))
+    await user.click(screen.getByRole('button', { name: 'Workout overview' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /logged squat set 2/i })).toBeDisabled())
 
     const secondAnnouncement = screen.getByRole('status')
@@ -227,7 +228,8 @@ describe('reviewer regressions', () => {
 
     try {
       view.rerender(<App {...props} settingsService={replacement} />)
-      expect(screen.getByRole('status')).toHaveTextContent('Loading saved settings')
+      expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
+      expect(await screen.findByText(/Loading saved settings/)).toHaveAttribute('role', 'status')
       expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
       await waitFor(() => expect(typeof resolveReplacement).toBe('function'))
       resolveReplacement({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
@@ -261,7 +263,8 @@ describe('reviewer regressions', () => {
     }
     try {
       view.rerender(<App {...props} settingsService={replacement} />)
-      expect(screen.getByRole('status')).toHaveTextContent('Loading saved settings')
+      expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
+      expect(await screen.findByText(/Loading saved settings/)).toHaveAttribute('role', 'status')
       expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
       await waitFor(() => expect(typeof rejectFirst).toBe('function'))
       rejectFirst!(new Error('replacement read failed'))
@@ -269,7 +272,7 @@ describe('reviewer regressions', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('Your saved settings could not be loaded')
       expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
       await user.click(retry)
-      expect(screen.getByRole('status')).toHaveTextContent('Loading saved settings')
+      expect(await screen.findByText(/Loading saved settings/)).toHaveAttribute('role', 'status')
       expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
       await waitFor(() => expect(typeof resolveRetry).toBe('function'))
       resolveRetry!({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })

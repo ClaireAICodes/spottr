@@ -312,6 +312,16 @@ p { color: var(--muted); line-height: 1.55; }
 .confirm-dialog :is(button, input, select, textarea, a, [tabindex]) { scroll-margin-block: 12px; }
 .danger-confirm { border-color: #912d25; color: #fff; background: #912d25; }
 
+/* Training confirmation uses full-size fields and actions, including Retry. */
+.set-confirmation { display: grid; gap: 16px; }
+.set-confirmation h3, .set-confirmation p { margin: 0; }
+.set-confirmation label { display: grid; gap: 7px; font-size: .78rem; font-weight: 850; }
+.set-confirmation input { width: 100%; min-width: 0; min-height: 52px; padding: 12px 14px; border: 1px solid #aaa69c; border-radius: 12px; background: #fff; color: var(--ink); font: inherit; font-size: 16px; }
+.set-confirmation .form-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+.set-confirmation .form-actions button { width: 100%; min-height: 52px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; font: inherit; font-weight: 800; cursor: pointer; }
+.set-confirmation .form-actions button:not(.action-button) { background: #fff; color: var(--ink); }
+.set-confirmation .form-actions button:disabled { cursor: wait; }
+
 .exercise-library { max-width: 820px; }
 .exercise-heading { grid-template-columns: 1fr auto; }
 .exercise-search { display: grid; gap: 8px; margin-bottom: 24px; color: var(--muted); font-size: .78rem; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; }
@@ -396,17 +406,25 @@ p { color: var(--muted); line-height: 1.55; }
 .active-session { max-width: 880px; }
 .active-session-heading { align-items: center; }
 .active-session-heading > svg { padding: 10px; width: 52px; height: 52px; border-radius: 15px; color: #fff; background: var(--ink); }
+.session-overview-toggle { min-height: 52px; }
 .session-exercises { display: grid; gap: 16px; }
 .session-exercise { min-height: 0; padding: 22px; }
 .session-exercise h3 { margin: 0; font-size: 1.25rem; }
-.session-exercise-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+.session-exercise-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+.session-exercise-heading > div:first-child { flex: 1 1 180px; min-width: 0; }
+.session-exercise-heading .session-exercise-controls { flex: 0 1 auto; min-width: 0; }
 .session-exercise-heading p { margin: 0 0 3px; color: var(--muted); font-size: .7rem; font-weight: 850; letter-spacing: .05em; text-transform: uppercase; }
 .session-exercise-controls { display: grid; grid-template-columns: repeat(4, 44px); gap: 6px; }
-.session-exercise-controls button { width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); background: #fff; cursor: pointer; }
+.session-exercise-controls button { width: 44px; min-height: 52px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); background: #fff; cursor: pointer; }
 .session-exercise-controls button:disabled { color: #969187; background: var(--surface); cursor: default; }
 .session-exercise h3:focus-visible { outline: 3px solid var(--signal); outline-offset: 4px; }
 .session-set-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.session-set-list li { display: grid; grid-template-columns: 34px minmax(90px, 1fr) minmax(80px, .8fr) auto; align-items: end; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
+.session-set-list li { display: block; padding: 11px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
+.session-set-fields { display: grid; grid-template-columns: 34px minmax(90px, 1fr) minmax(80px, .8fr) auto; align-items: end; gap: 9px; }
+.session-set-list section { min-width: 0; }
+.session-set-list section h2 { overflow-wrap: anywhere; }
+.session-set-list section input { font-size: 16px; min-height: 52px; }
+.session-set-list section button { min-height: 52px; }
 .session-set-list li.logged { background: #eef9d8; }
 .session-set-list li.skipped { background: var(--surface); }
 .session-set-list label { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: .64rem; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
@@ -536,7 +554,7 @@ p { color: var(--muted); line-height: 1.55; }
   .set-targets .compact-actions button { flex: 1; width: auto; }
   .session-exercise-heading { align-items: flex-start; }
   .session-exercise-controls { grid-template-columns: repeat(2, 44px); }
-  .session-set-list li { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr); }
+  .session-set-fields { grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1fr); }
   .session-set-actions { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rest-timer, .finish-session, .history-card-heading { align-items: stretch; flex-direction: column; }
   .finish-session .action-button, .history-card-heading button { width: 100%; }

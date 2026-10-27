@@ -118,17 +118,29 @@ describe('connected Home journey', () => {
 
   it('announces honest empty, loading and retryable failed activity without stealing departed focus', async () => {
     const f = await fixture()
-    let reject!: (error: Error) => void
+    let reject: ((error: Error) => void) | undefined
+    let disposed = false
     let calls = 0
-    const service = { ...f.sessionService, listHistory: () => ++calls === 1 ? new Promise<never>((_, no) => { reject = no }) : f.sessionService.listHistory() }
+    const service = { ...f.sessionService, listHistory: () => ++calls === 1 ? new Promise<never>((_, no) => {
+      reject = no
+      if (disposed) no(new Error('Held read cleanup'))
+    }) : f.sessionService.listHistory() }
     const user = userEvent.setup()
-    render(<App {...f} sessionService={service} />)
-    expect(await screen.findByText('Loading recent activity…')).toBeInTheDocument()
-    await act(async () => reject(new Error('Read failed')))
-    await user.click(screen.getByRole('button', { name: 'Retry recent activity' }))
-    expect(await screen.findByText('No completed workouts yet')).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: 'Exercises' }))
-    expect(screen.getByRole('tab', { name: 'Exercises' })).toHaveFocus()
+    const view = render(<App {...f} sessionService={service} />)
+    try {
+      expect(await screen.findByText('Loading recent activity…')).toBeInTheDocument()
+      // Initial loading precedes startup admission; own the actual held read first.
+      await waitFor(() => expect(reject).toBeTypeOf('function'))
+      await act(async () => reject!(new Error('Read failed')))
+      await user.click(screen.getByRole('button', { name: 'Retry recent activity' }))
+      expect(await screen.findByText('No completed workouts yet')).toBeInTheDocument()
+      await user.click(screen.getByRole('tab', { name: 'Exercises' }))
+      expect(screen.getByRole('tab', { name: 'Exercises' })).toHaveFocus()
+    } finally {
+      disposed = true
+      view.unmount()
+      await act(async () => reject?.(new Error('Held read cleanup')))
+    }
   })
 
   it('resolves current shared name and notes on Resume without changing the session snapshot', async () => {

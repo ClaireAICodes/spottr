@@ -11,6 +11,8 @@ import { createSessionService, createMemorySessionRepository, type SessionServic
 import { createSettingsService, createMemorySettingsRepository, type SettingsService } from './settings'
 import { withWorkoutIntegrityLock } from './workoutIntegrity'
 import { createDatasetRecovery, type RecoveryState } from './datasetRecovery'
+import { createIndexedDbDraftRepository } from './draftRepository'
+import { createMemoryDraftRepository, createWorkoutDraftOwner } from './workoutDrafts'
 
 const datasetLock = 'spottr-dataset'
 const admitted = Symbol('coordinated dataset root')
@@ -115,6 +117,9 @@ export function composeDataset(input: DatasetCores = {}) {
   const persistent = Boolean(!input.gymService && !input.exerciseService && !input.workoutService && !input.sessionService && !input.settingsService)
   const recovery = persistent ? createDatasetRecovery(() => advanceRestoreGeneration()) : undefined
   const observe = () => generation(persistent)
+  // Injected roots still require operation admission and exact intent cleanup.
+  // Their lifetime is this dataset, not durable browser storage.
+  const draftOwner = createWorkoutDraftOwner(persistent ? createIndexedDbDraftRepository() : createMemoryDraftRepository())
   const admit: Admission = async (operation, mode = 'exclusive') => {
     if (!recovery) return runRoot(operation, mode)
     if (mode === 'exclusive') return runRoot(async () => { await recovery.recover(); return operation() })
@@ -156,13 +161,14 @@ export function composeDataset(input: DatasetCores = {}) {
     const cores = { gymService: managedGym, exerciseService: exercise, workoutService: workout,
       sessionService: session, settingsService: replacement, now: input.now }
     return {
-      ...roots, settingsService: publish(replacement, admit, observe, ['get']),
+      ...roots, draftOwner, getGeneration: observe, settingsService: publish(replacement, admit, observe, ['get']),
       initializeOrRecover: () => runRoot(() => recovery ? recovery.recover(true) : Promise.resolve()),
       getRecoveryState: (): RecoveryState => recovery?.getState() ?? 'ready',
       subscribeRecovery: (listener: () => void) => recovery?.subscribe(listener) ?? (() => undefined),
       recoveryEvidence: () => runRoot(() => recovery ? recovery.evidence() : Promise.resolve(null)),
       exportBackup: () => admit(() => createSpottrBackup(cores)),
       restoreBackup: (backup: SpottrBackup) => admit(() => {
+        if (draftOwner.getSnapshot()) throw new Error('Save or discard your local workout draft before replacing data')
         if (!recovery) advanceRestoreGeneration(false)
         return restoreSpottrBackup(backup, cores, recovery?.lifecycle)
       }),

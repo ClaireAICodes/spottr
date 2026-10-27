@@ -1,8 +1,10 @@
 import type { WorkoutRepository, WorkoutTemplate } from './workouts'
 import { replaceTransaction } from './replaceTransaction'
 
-const WORKOUT_DATABASE_VERSION = 1
+export const WORKOUT_DATABASE_VERSION = 2
 const WORKOUTS_STORE = 'workouts'
+// Local retry evidence, never part of portable workout/backup records.
+export const UPDATE_OUTCOMES_STORE = 'updateOutcomes'
 
 function requestResult<T>(request: IDBRequest<T>) {
   return new Promise<T>((resolve, reject) => {
@@ -27,6 +29,9 @@ export function createIndexedDbWorkoutRepository(databaseName = 'spottr-v1-worko
     databasePromise = new Promise((resolve, reject) => {
       const request = indexedDB.open(databaseName, WORKOUT_DATABASE_VERSION)
       request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(UPDATE_OUTCOMES_STORE)) {
+          request.result.createObjectStore(UPDATE_OUTCOMES_STORE, { keyPath: 'id' })
+        }
         if (!request.result.objectStoreNames.contains(WORKOUTS_STORE)) {
           request.result.createObjectStore(WORKOUTS_STORE, { keyPath: 'id' })
         }
@@ -45,6 +50,12 @@ export function createIndexedDbWorkoutRepository(databaseName = 'spottr-v1-worko
   }
 
   return {
+    async getUpdateOutcome(operationId, targetId) {
+      const database = await openDatabase()
+      const outcome = await requestResult(database.transaction(UPDATE_OUTCOMES_STORE).objectStore(UPDATE_OUTCOMES_STORE).get(operationId))
+      if (outcome && outcome.template.id !== targetId) throw new Error('Workout operation identity conflict')
+      return outcome?.template ?? null
+    },
     async list() {
       const database = await openDatabase()
       return requestResult(database.transaction(WORKOUTS_STORE).objectStore(WORKOUTS_STORE).getAll()) as Promise<WorkoutTemplate[]>
@@ -54,11 +65,38 @@ export function createIndexedDbWorkoutRepository(databaseName = 'spottr-v1-worko
       const result = await requestResult(database.transaction(WORKOUTS_STORE).objectStore(WORKOUTS_STORE).get(id))
       return (result as WorkoutTemplate | undefined) ?? null
     },
-    async save(template) {
+    async save(template, expectedUpdatedAt, operationId) {
       const database = await openDatabase()
-      const transaction = database.transaction(WORKOUTS_STORE, 'readwrite')
-      transaction.objectStore(WORKOUTS_STORE).put(template)
-      await transactionComplete(transaction)
+      const transaction = database.transaction([WORKOUTS_STORE, UPDATE_OUTCOMES_STORE], 'readwrite')
+      const completed = transactionComplete(transaction)
+      const store = transaction.objectStore(WORKOUTS_STORE)
+      const outcomes = transaction.objectStore(UPDATE_OUTCOMES_STORE)
+      let conflict = false
+      let identityConflict = false
+      function write() {
+        store.put(template)
+        if (operationId) outcomes.put({ id: operationId, template })
+      }
+      function compareAndWrite() {
+        if (expectedUpdatedAt === undefined) write()
+        else {
+          const read = store.get(template.id)
+          read.onsuccess = () => {
+            if (expectedUpdatedAt === null ? !!read.result : read.result?.updatedAt !== expectedUpdatedAt) conflict = true
+            else write()
+          }
+        }
+      }
+      if (operationId) {
+        const outcome = outcomes.get(operationId)
+        outcome.onsuccess = () => {
+          if (outcome.result) identityConflict = outcome.result.template.id !== template.id
+          else compareAndWrite()
+        }
+      } else compareAndWrite()
+      await completed
+      if (identityConflict) throw new Error('Workout operation identity conflict')
+      if (conflict) throw new Error('Workout changed in another editor. Your draft is retained.')
     },
     async remove(id) {
       const database = await openDatabase()

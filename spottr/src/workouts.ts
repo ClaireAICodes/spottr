@@ -36,7 +36,8 @@ export type WorkoutTemplateDraft = Pick<WorkoutTemplate, 'name' | 'gymId'> & {
 export interface WorkoutRepository {
   list(): Promise<WorkoutTemplate[]>
   get(id: string): Promise<WorkoutTemplate | null>
-  save(template: WorkoutTemplate): Promise<void>
+  save(template: WorkoutTemplate, expectedUpdatedAt?: string | null, operationId?: string): Promise<void>
+  getUpdateOutcome?(operationId: string, targetId: string): Promise<WorkoutTemplate | null>
   remove(id: string): Promise<void>
   replaceAll(templates: WorkoutTemplate[]): Promise<void>
   close?(): Promise<void>
@@ -59,6 +60,26 @@ function cloneTemplate(template: WorkoutTemplate): WorkoutTemplate {
       ...exercise,
       sets: exercise.sets.map((set) => ({ ...set })),
     })),
+  }
+}
+
+// Pure preflight: no journal admission or target write has occurred on rejection.
+export function validateWorkoutDraft(draft: WorkoutTemplateDraft) {
+  if (!draft.name.trim()) throw new Error('Workout name is required')
+  if (!draft.gymId.trim()) throw new Error('Choose a gym')
+  if (!draft.exercises.length) throw new Error('Add at least one exercise')
+  const seen = new Set<string>()
+  for (const exercise of draft.exercises) {
+    const id = exercise.exerciseId.trim()
+    if (!id) throw new Error('Choose a shared exercise')
+    if (seen.has(id)) throw new Error('An exercise can only appear once in a workout')
+    seen.add(id)
+    if (!exercise.sets.length) throw new Error('Each exercise needs at least one set')
+    for (const set of exercise.sets) {
+      if (!['warm-up', 'working', 'drop'].includes(set.kind)) throw new Error('Choose a valid set type')
+      if (!Number.isFinite(set.weight) || set.weight < 0) throw new Error('Set weight must be zero or greater')
+      if (!Number.isInteger(set.reps) || set.reps <= 0) throw new Error('Set reps must be a positive whole number')
+    }
   }
 }
 
@@ -131,15 +152,25 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
     return template
   }
 
-  async function updateTemplate(id: string, draft: WorkoutTemplateDraft) {
+  async function updateTemplate(id: string, draft: WorkoutTemplateDraft, expectedUpdatedAt?: string, operationId?: string) {
+    if (operationId) {
+      if (!repository.getUpdateOutcome) throw new Error('Recoverable workout update storage is unavailable')
+      const outcome = await repository.getUpdateOutcome(operationId, id)
+      if (outcome) return cloneTemplate(outcome)
+    }
     const current = await requireTemplate(id)
     await ensureGymExists(draft.gymId.trim())
     const template: WorkoutTemplate = {
       ...current,
       ...normalize(draft, current),
-      updatedAt: now(),
+      updatedAt: new Date(Math.max(Date.parse(now()), Date.parse(current.updatedAt) + 1)).toISOString(),
     }
-    await repository.save(template)
+    await repository.save(template, expectedUpdatedAt ?? current.updatedAt, operationId)
+    if (operationId) {
+      const outcome = await repository.getUpdateOutcome!(operationId, id)
+      if (!outcome) throw new Error('Workout update outcome is unavailable')
+      return cloneTemplate(outcome)
+    }
     return cloneTemplate(template)
   }
 
@@ -157,23 +188,32 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
       return template ? cloneTemplate(template) : null
     },
 
-    async create(draft: WorkoutTemplateDraft) {
+    async create(draft: WorkoutTemplateDraft, operationId?: string) {
       return mutate(async () => {
+        if (operationId) {
+          const committed = await repository.get(operationId)
+          if (committed) return cloneTemplate(committed)
+        }
         await ensureGymExists(draft.gymId.trim())
         const timestamp = now()
         const template: WorkoutTemplate = {
-          id: createId(),
+          id: operationId ?? createId(),
           ...normalize(draft, undefined, true),
           createdAt: timestamp,
           updatedAt: timestamp,
         }
-        await repository.save(template)
+        try { await repository.save(template, operationId ? null : undefined) }
+        catch (error) {
+          const committed = operationId ? await repository.get(operationId) : null
+          if (committed) return cloneTemplate(committed)
+          throw error
+        }
         return cloneTemplate(template)
       })
     },
 
-    async update(id: string, draft: WorkoutTemplateDraft) {
-      return mutate(() => updateTemplate(id, draft))
+    async update(id: string, draft: WorkoutTemplateDraft, expectedUpdatedAt?: string, operationId?: string) {
+          return mutate(() => updateTemplate(id, draft, expectedUpdatedAt, operationId))
     },
 
     async updateSetTarget(id: string, templateExerciseId: string, setId: string, target: { weight: number; reps: number }) {
@@ -194,9 +234,9 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
         const template: WorkoutTemplate = {
           ...current,
           ...normalize({ name: current.name, gymId: current.gymId, exercises }, current),
-          updatedAt: now(),
+          updatedAt: new Date(Math.max(Date.parse(now()), Date.parse(current.updatedAt) + 1)).toISOString(),
         }
-        await repository.save(template)
+        await repository.save(template, current.updatedAt)
         return cloneTemplate(template)
       })
     },
@@ -260,7 +300,13 @@ export function createWorkoutService(repository: WorkoutRepository, options: Wor
 
 export function createMemoryWorkoutRepository(initialTemplates: WorkoutTemplate[] = []): WorkoutRepository {
   const templates = new Map(initialTemplates.map((template) => [template.id, cloneTemplate(template)]))
+  const outcomes = new Map<string, WorkoutTemplate>()
   return {
+    async getUpdateOutcome(operationId, targetId) {
+      const outcome = outcomes.get(operationId)
+      if (outcome && outcome.id !== targetId) throw new Error('Workout operation identity conflict')
+      return outcome ? cloneTemplate(outcome) : null
+    },
     async list() {
       return [...templates.values()].map(cloneTemplate)
     },
@@ -268,8 +314,14 @@ export function createMemoryWorkoutRepository(initialTemplates: WorkoutTemplate[
       const template = templates.get(id)
       return template ? cloneTemplate(template) : null
     },
-    async save(template) {
+    async save(template, expectedUpdatedAt, operationId) {
+      if (operationId && outcomes.has(operationId)) {
+        if (outcomes.get(operationId)!.id !== template.id) throw new Error('Workout operation identity conflict')
+        return
+      }
+      if (expectedUpdatedAt !== undefined && (expectedUpdatedAt === null ? templates.has(template.id) : templates.get(template.id)?.updatedAt !== expectedUpdatedAt)) throw new Error('Workout changed in another editor. Your draft is retained.')
       templates.set(template.id, cloneTemplate(template))
+      if (operationId) outcomes.set(operationId, cloneTemplate(template))
     },
     async remove(id) {
       templates.delete(id)

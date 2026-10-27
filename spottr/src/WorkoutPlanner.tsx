@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { AUTHORING_DRAFT_ID, createMemoryDraftRepository, createWorkoutDraftOwner, type WorkoutDraftOwner, type WorkoutDraftRecord } from './workoutDrafts'
 import { ArrowDown, ArrowUp, Copy, Dumbbell, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { FormEvent } from 'react'
 import type { Exercise, ExerciseDraft, ExerciseService } from './exercises'
@@ -20,7 +21,7 @@ type DuplicateState = {
 }
 
 let draftSequence = 0
-const draftId = () => `draft-${++draftSequence}`
+const draftId = () => `draft-${++draftSequence}-${crypto.randomUUID()}`
 
 // Tuple encoding preserves scope even when imported IDs contain separators or overlap.
 const exerciseControlKey = (exerciseId: string | undefined, action: string) => JSON.stringify(['exercise', exerciseId, action])
@@ -31,46 +32,80 @@ export function WorkoutPlanner({
   gymService,
   exerciseService,
   settings,
+  draftOwner: providedDraftOwner,
+  datasetGeneration = '0',
 }: {
   workoutService: WorkoutService
   gymService: GymService
   exerciseService: ExerciseService
   settings: AppSettings
+  draftOwner?: WorkoutDraftOwner
+  datasetGeneration?: string
 }) {
-  const [templates, setTemplates] = useState<WorkoutTemplate[]>([])
-  const [gyms, setGyms] = useState<Gym[]>([])
-  const [exercises, setExercises] = useState<Exercise[]>([])
-  const [editor, setEditor] = useState<EditorState | null>(null)
-  const [duplicate, setDuplicate] = useState<DuplicateState | null>(null)
-  const [pendingDelete, setPendingDelete] = useState<WorkoutTemplate | null>(null)
-  const [exerciseQuery, setExerciseQuery] = useState('')
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [error, setError] = useState('')
-  const [isSaving, setIsSaving] = useState(false)
-  const [isVarying, setIsVarying] = useState(false)
-  const saveInFlight = useRef(false)
-  const keepDeleteButton = useRef<HTMLButtonElement>(null)
-  const deleteDialog = useRef<HTMLDivElement>(null)
-  const confirmDeleteButton = useRef<HTMLButtonElement>(null)
-  const deleteReturnFocus = useRef<HTMLButtonElement | null>(null)
-  const addWorkoutButton = useRef<HTMLButtonElement>(null)
-  const focusAfterDelete = useRef(false)
-  const editButtons = useRef(new Map<string, HTMLButtonElement>())
-  const panelReturnFocus = useRef<() => void>(() => {})
-  const editorControls = useRef(new Map<string, HTMLElement>())
-  const editorControlRefs = useRef(new Map<string, (node: HTMLElement | null) => void>())
-  const pendingEditorFocus = useRef<string | null>(null)
-  const [savedFocusId, setSavedFocusId] = useState<string | null>(null)
-  const [newExercise, setNewExercise] = useState<ExerciseDraft | null>(null)
-  const [exerciseError, setExerciseError] = useState('')
-  const [isCreating, setIsCreating] = useState(false)
-  const exerciseDialog = useRef<HTMLDivElement>(null)
+  const localOwner = useMemo(() => createWorkoutDraftOwner(createMemoryDraftRepository()), [])
+  const draftOwner = providedDraftOwner ?? localOwner
+  const snapshot = useSyncExternalStore(draftOwner.subscribe, draftOwner.getSnapshot)
+  const busy = useSyncExternalStore(draftOwner.subscribe, draftOwner.getBusy)
+  const libraryBusy = useSyncExternalStore(draftOwner.subscribe, draftOwner.getLibraryBusy)
+  const priorLibraryBusy = useRef(libraryBusy)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const editor: EditorState | null = snapshot ? { ...snapshot.value, template: snapshot.template ?? null } : null
+  const newExercise = snapshot?.nested ?? null
+  const exerciseQuery = snapshot?.exerciseQuery ?? ''
+  const editUnit = snapshot?.editUnit ?? settings.weightUnit
+  function publish(changes: Partial<WorkoutDraftRecord>) {
+    const current = draftOwner.getSnapshot()
+    if (!current) return
+    draftOwner.edit({ ...current, ...changes, revision: current.revision + 1, updatedAt: new Date().toISOString() })
+  }
+  function setEditor(next: EditorState | null) {
+    if (!next) return // Closing is an explicit exact-revision discard/save, never an unmount side effect.
+    if (draftOwner.getSnapshot()) publish({ value: { name: next.name, gymId: next.gymId, exercises: next.exercises } })
+    else draftOwner.edit({
+      schema: 1, id: AUTHORING_DRAFT_ID, editorIntentId: crypto.randomUUID(), templateId: next.template?.id ?? crypto.randomUUID(),
+      baseUpdatedAt: next.template?.updatedAt ?? null, template: next.template, revision: 1,
+      datasetGeneration, updatedAt: new Date().toISOString(), value: { name: next.name, gymId: next.gymId, exercises: next.exercises },
+      numericBuffers: {}, nested: null, editUnit: settings.weightUnit, returnContext: { kind: 'workouts' }, focusKey: 'name', scrollY: window.scrollY,
+    })
+  }
+  function setNewExercise(nested: ExerciseDraft | null) { publish({ nested }) }
+    function setExerciseQuery(exerciseQuery: string) { publish({ exerciseQuery }) }
 
-  function controlRef(key: string) {
+    // A service read may queue behind the held Save. The captured template is
+    // still a valid reopen choice; its captured version remains conflict-fenced.
+    const [templates, setTemplates] = useState<WorkoutTemplate[]>(() => snapshot?.template ? [snapshot.template] : [])
+    const [gyms, setGyms] = useState<Gym[]>([])
+    const [exercises, setExercises] = useState<Exercise[]>([])
+    const [duplicate, setDuplicate] = useState<DuplicateState | null>(null)
+    const [pendingDelete, setPendingDelete] = useState<WorkoutTemplate | null>(null)
+    const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+    const [error, setError] = useState('')
+    const [saving, setIsSaving] = useState(false)
+    const isSaving = saving || busy
+    const isVarying = false
+    const saveInFlight = useRef(false)
+    const keepDeleteButton = useRef<HTMLButtonElement>(null)
+    const deleteDialog = useRef<HTMLDivElement>(null)
+    const confirmDeleteButton = useRef<HTMLButtonElement>(null)
+    const deleteReturnFocus = useRef<HTMLButtonElement | null>(null)
+    const addWorkoutButton = useRef<HTMLButtonElement>(null)
+    const focusAfterDelete = useRef(false)
+    const editButtons = useRef(new Map<string, HTMLButtonElement>())
+    const panelReturnFocus = useRef<() => void>(() => {})
+    const editorControls = useRef(new Map<string, HTMLElement>())
+    const editorControlRefs = useRef(new Map<string, (node: HTMLElement | null) => void>())
+    const pendingEditorFocus = useRef<string | null>(null)
+    const [savedFocusId, setSavedFocusId] = useState<string | null>(null)
+    const [exerciseError, setExerciseError] = useState('')
+    const isCreating = busy
+    const exerciseDialog = useRef<HTMLDivElement>(null)
+
+    function controlRef(key: string) {
     // Stable refs avoid a moved row's detach deleting another row's new binding.
     if (!editorControlRefs.current.has(key)) {
       editorControlRefs.current.set(key, (node: HTMLElement | null) => {
-        if (node) editorControls.current.set(key, node)
+        if (node) { node.dataset.draftFocus = key; editorControls.current.set(key, node) }
         else editorControls.current.delete(key)
       })
     }
@@ -95,14 +130,23 @@ export function WorkoutPlanner({
     }
   }, [savedFocusId, status, isSaving])
 
-  function closePanel() {
-    setEditor(null)
+  async function closePanel() {
+    const epoch = draftOwner.getIntentEpoch()
+    const draft = draftOwner.getSnapshot()
+    if (draft) {
+      const result = await draftOwner.flushDraft(draft.id)
+      if (result.status !== 'saved' || !(await draftOwner.removeCommitted(draft.id, draft.revision, draft.editorIntentId))) {
+        if (mounted.current) setError('Could not discard the exact draft revision. Your changes are still here.')
+        return
+      }
+    }
+    if (!mounted.current || draftOwner.getIntentEpoch() !== epoch) return
     setDuplicate(null)
     setError('')
-    queueMicrotask(() => panelReturnFocus.current())
+    queueMicrotask(() => { if (mounted.current && draftOwner.getIntentEpoch() === epoch) panelReturnFocus.current() })
   }
 
-  async function load() {
+  async function load(owns = () => mounted.current, preserveOperationError = false) {
     setStatus('loading')
     try {
       const [nextTemplates, nextGyms, nextExercises] = await Promise.all([
@@ -110,24 +154,40 @@ export function WorkoutPlanner({
         gymService.list(),
         exerciseService.search(),
       ])
+      if (!owns()) return
       setTemplates(nextTemplates)
       setGyms(nextGyms)
       setExercises(nextExercises)
-      setError('')
+      if (!preserveOperationError) setError('')
       setStatus('ready')
     } catch {
-      setError('Your workouts could not be loaded. Your existing data has not been changed.')
+      if (!owns()) return
+      const committed = draftOwner.getCommittedWorkout()
+      const libraryIds = draftOwner.getLibraryOperations().flatMap(operation => operation.created ? [operation.created.id] : [])
+      setError(committed
+        ? `Workout saved as ${committed.id}. Refresh failed; Try again refreshes without saving again.`
+        : libraryIds.length
+          ? `Library exercise saved as ${libraryIds.join(', ')}. Refresh failed; Try again refreshes without creating again.`
+          : 'Your workouts could not be loaded. Your existing data has not been changed.')
       setStatus('error')
     }
   }
 
   useEffect(() => { void load() }, [workoutService, gymService, exerciseService])
+  useEffect(() => {
+    if (priorLibraryBusy.current && !libraryBusy) {
+      const epoch = draftOwner.getIntentEpoch()
+      void load(() => mounted.current && draftOwner.getIntentEpoch() === epoch, true)
+    }
+    priorLibraryBusy.current = libraryBusy
+  }, [libraryBusy])
 
   function openEditor(template: WorkoutTemplate | null) {
     panelReturnFocus.current = () => {
       if (template) editButtons.current.get(template.id)?.focus()
       else addWorkoutButton.current?.focus()
     }
+    if (draftOwner.getSnapshot()) return
     setEditor({
       template,
       name: template?.name ?? '',
@@ -207,7 +267,7 @@ export function WorkoutPlanner({
   }
 
   function cancelNewExercise() {
-    if (saveInFlight.current) return
+    if (saveInFlight.current || draftOwner.getBusy()) return
     pendingEditorFocus.current = 'create-exercise'
     setNewExercise(null)
     setExerciseError('')
@@ -215,26 +275,22 @@ export function WorkoutPlanner({
 
   async function saveNewExercise(event: FormEvent) {
     event.preventDefault()
-    if (!newExercise || !editor || saveInFlight.current) return
-    saveInFlight.current = true
-    setIsCreating(true)
+    if (!newExercise || !editor || draftOwner.getBusy()) return
+    const epoch = draftOwner.getIntentEpoch()
     setExerciseError('')
     try {
-      const created = await exerciseService.create(newExercise)
-      const entry = {
-        id: draftId(), exerciseId: created.id,
-        sets: [{ id: draftId(), kind: 'working' as const, weight: 0, reps: 8 }],
+      const content = structuredClone(newExercise)
+      const result = await draftOwner.createLibraryEntry(JSON.stringify(['nested', content]), operationId => exerciseService.create(content, operationId), (current, created) => ({
+        value: { ...current.value, exercises: [...current.value.exercises, { id: draftId(), exerciseId: created.id, sets: [{ id: draftId(), kind: 'working', weight: 0, reps: 8 }] }] },
+        nested: null, exerciseQuery: '',
+      }), exerciseService.get)
+      if (result && mounted.current && draftOwner.getIntentEpoch() === epoch && draftOwner.getSnapshot()?.revision === result.revision) {
+        setExercises(items => [...items, result.created].sort((a, b) => a.name.localeCompare(b.name)))
+        const entry = draftOwner.getSnapshot()!.value.exercises.at(-1)!
+        pendingEditorFocus.current = setControlKey(entry.id, entry.sets[0].id, 'type')
       }
-      setExercises((items) => [...items, created].sort((left, right) => left.name.localeCompare(right.name)))
-      pendingEditorFocus.current = setControlKey(entry.id, entry.sets[0].id, 'type')
-      setEditor({ ...editor, exercises: [...editor.exercises, entry] })
-      setExerciseQuery('')
-      setNewExercise(null)
     } catch (caught) {
-      setExerciseError(caught instanceof Error ? caught.message : 'The exercise could not be saved. Your workout draft is unchanged.')
-    } finally {
-      saveInFlight.current = false
-      setIsCreating(false)
+      if (mounted.current && draftOwner.getIntentEpoch() === epoch) setExerciseError(caught instanceof Error ? caught.message : 'The exercise could not be saved.')
     }
   }
 
@@ -257,22 +313,23 @@ export function WorkoutPlanner({
     else if (!exerciseDialog.current?.contains(document.activeElement)) exerciseDialog.current?.querySelector<HTMLInputElement>('input')?.focus()
   }, [newExercise, isCreating])
 
-  function updateSet(exerciseIndex: number, setIndex: number, field: 'kind' | 'weight' | 'reps', value: string) {
-    if (!editor) return
-    const exercise = editor.exercises[exerciseIndex]
-    const sets = [...exercise.sets]
-    sets[setIndex] = {
-      ...sets[setIndex],
-      [field]: field === 'kind'
-        ? value as SetKind
-        : field === 'weight'
-          ? storedWeight(Number(value), settings.weightUnit)
-          : Number(value),
+    function updateSet(exerciseIndex: number, setIndex: number, field: 'kind' | 'weight' | 'reps', value: string) {
+      if (!editor) return
+      const exercise = editor.exercises[exerciseIndex]
+      if (field !== 'kind') publish({ numericBuffers: { ...draftOwner.getSnapshot()!.numericBuffers, [setControlKey(exercise.id, exercise.sets[setIndex].id, field)]: value } })
+      const sets = [...exercise.sets]
+      sets[setIndex] = {
+        ...sets[setIndex],
+        [field]: field === 'kind'
+          ? value as SetKind
+          : field === 'weight'
+            ? storedWeight(Number(value), editUnit)
+            : Number(value),
+      }
+      updateExercise(exerciseIndex, { ...exercise, sets })
     }
-    updateExercise(exerciseIndex, { ...exercise, sets })
-  }
 
-  function moveSet(exerciseIndex: number, setIndex: number, direction: -1 | 1) {
+    function moveSet(exerciseIndex: number, setIndex: number, direction: -1 | 1) {
     if (!editor) return
     const exercise = editor.exercises[exerciseIndex]
     const target = setIndex + direction
@@ -285,49 +342,43 @@ export function WorkoutPlanner({
   }
 
   async function makeVariation(exerciseIndex: number) {
-    if (!editor || saveInFlight.current) return
-    saveInFlight.current = true
-    setIsSaving(true)
-    setIsVarying(true)
+    if (!editor || draftOwner.getBusy()) return
+    const entry = editor.exercises[exerciseIndex]
+    const epoch = draftOwner.getIntentEpoch()
     setError('')
     try {
-      const current = editor.exercises[exerciseIndex]
-      const original = exercises.find(({ id }) => id === current.exerciseId)
-      if (!original) throw new Error('The shared exercise is no longer available')
-      const variation = await exerciseService.duplicate(original.id)
-      setExercises((items) => [...items, variation].sort((left, right) => left.name.localeCompare(right.name)))
-      pendingEditorFocus.current = setControlKey(current.id, current.sets[0].id, 'type')
-      updateExercise(exerciseIndex, { ...current, exerciseId: variation.id })
+      const result = await draftOwner.createLibraryEntry(JSON.stringify(['variation', entry.id, entry.exerciseId]), operationId => exerciseService.duplicate(entry.exerciseId, undefined, operationId), (current, created) => ({
+        value: { ...current.value, exercises: current.value.exercises.map(item => item.id === entry.id ? { ...item, exerciseId: created.id } : item) },
+      }), exerciseService.get)
+      if (result && mounted.current && draftOwner.getIntentEpoch() === epoch && draftOwner.getSnapshot()?.revision === result.revision) {
+        setExercises(items => [...items, result.created].sort((a, b) => a.name.localeCompare(b.name)))
+        pendingEditorFocus.current = setControlKey(entry.id, entry.sets[0].id, 'type')
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The variation could not be created.')
-    } finally {
-      saveInFlight.current = false
-      setIsVarying(false)
-      setIsSaving(false)
+      if (mounted.current && draftOwner.getIntentEpoch() === epoch) setError(caught instanceof Error ? caught.message : 'The variation could not be created.')
     }
   }
 
   async function save(event: FormEvent) {
-    event.preventDefault()
-    if (!editor || saveInFlight.current) return
-    saveInFlight.current = true
-    setIsSaving(true)
-    setError('')
-    try {
-      const draft = { name: editor.name, gymId: editor.gymId, exercises: editor.exercises }
-      const saved = editor.template
-        ? await workoutService.update(editor.template.id, draft)
-        : await workoutService.create(draft)
-      setSavedFocusId(saved.id)
-      setEditor(null)
-      await load()
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The workout could not be saved.')
-    } finally {
-      saveInFlight.current = false
-      setIsSaving(false)
+      event.preventDefault()
+      if (!editor || saveInFlight.current || draftOwner.getBusy()) return
+      const epoch = draftOwner.getIntentEpoch()
+      const owns = () => mounted.current && draftOwner.getIntentEpoch() === epoch
+      saveInFlight.current = true
+      setIsSaving(true)
+      setError('')
+      try {
+        const saved = await draftOwner.saveWorkout(workoutService)
+        if (!owns()) return
+        setSavedFocusId(saved.id)
+        await load(owns)
+      } catch (caught) {
+        if (owns()) setError(caught instanceof Error ? caught.message : 'The workout could not be saved.')
+      } finally {
+        saveInFlight.current = false
+        setIsSaving(false)
+      }
     }
-  }
 
   async function createDuplicate() {
     if (!duplicate || saveInFlight.current) return
@@ -416,11 +467,18 @@ export function WorkoutPlanner({
           <h2>Workouts</h2>
           <p>Build ordered workouts from shared exercises and independent set targets.</p>
         </div>
-        <ActionButton ref={addWorkoutButton} type="button" onClick={() => openEditor(null)} disabled={isSaving || status !== 'ready' || gyms.length === 0}>
+        <ActionButton ref={addWorkoutButton} type="button" onClick={() => openEditor(null)} disabled={draftOwner.getLibraryBusy() || status !== 'ready' || gyms.length === 0}>
           <Plus size={18} aria-hidden="true" /> Add workout
         </ActionButton>
       </div>
 
+      {draftOwner.getLibraryOperations().filter(operation => operation.status === 'committed' || operation.status === 'unknown').map(operation => (
+        <p role="status" className="form-message" key={operation.operationId}>
+          {operation.created
+            ? `Library exercise saved as ${operation.created.id}. It has not been applied to the changed draft; only the original operation can retry reconciliation.`
+            : `Library operation ${operation.operationId} has an unresolved outcome. Creation will not be replayed.`}
+        </p>
+      ))}
       {status === 'loading' && <p role="status" className="state-message">Loading workouts…</p>}
       {isSaving && !pendingDelete && status !== 'loading' && <p role="status" className="form-message">{isVarying ? 'Creating exercise variation…' : duplicate ? 'Duplicating workout…' : 'Saving workout…'}</p>}
       {status === 'error' && <div role="alert" className="state-message error-state"><p>{error}</p><button type="button" className="text-button" onClick={() => void load()}>Try again</button></div>}
@@ -439,13 +497,13 @@ export function WorkoutPlanner({
           <p>Create a reusable workout for the equipment at your gym.</p>
         </Panel>
       )}
-      {status === 'ready' && templates.length > 0 && !editor && (
+      {(status === 'ready' || status === 'loading') && templates.length > 0 && !editor && (
         <div className="workout-list" aria-label="Workout templates">
           {templates.map((template) => (
             <article key={template.id} className="workout-card" aria-label={template.name}>
               <div><p className="exercise-meta">{gymName(template.gymId)}</p><h3>{template.name}</h3><p>{template.exercises.length} {template.exercises.length === 1 ? 'exercise' : 'exercises'} · {template.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0)} sets</p></div>
               <div className="workout-card-actions">
-                <button ref={(button) => { if (button) editButtons.current.set(template.id, button); else editButtons.current.delete(template.id) }} type="button" aria-label={`Edit ${template.name}`} onClick={() => openEditor(template)} disabled={isSaving}><Pencil size={16} aria-hidden="true" /> Edit</button>
+                <button ref={(button) => { if (button) editButtons.current.set(template.id, button); else editButtons.current.delete(template.id) }} type="button" aria-label={`Edit ${template.name}`} onClick={() => openEditor(template)} disabled={draftOwner.getLibraryBusy()}><Pencil size={16} aria-hidden="true" /> Edit</button>
                 <button type="button" aria-label={`Duplicate ${template.name}`} onClick={(event) => { const trigger = event.currentTarget; panelReturnFocus.current = () => trigger.focus(); setError(''); setDuplicate({ template, gymId: template.gymId }) }} disabled={isSaving}><Copy size={16} aria-hidden="true" /> Duplicate</button>
                 <button type="button" aria-label={`Delete ${template.name}`} onClick={(event) => { deleteReturnFocus.current = event.currentTarget; setError(''); setPendingDelete(template) }} disabled={isSaving}><Trash2 size={16} aria-hidden="true" /> Delete</button>
               </div>
@@ -458,7 +516,7 @@ export function WorkoutPlanner({
         <Panel className="duplicate-panel" aria-labelledby="duplicate-title">
           <h3 id="duplicate-title">Duplicate {duplicate.template.name}</h3>
           <label>Duplicate to gym<select autoFocus value={duplicate.gymId} disabled={isSaving} onChange={(event) => setDuplicate({ ...duplicate, gymId: event.target.value })}>{gyms.map((gym) => <option key={gym.id} value={gym.id}>{gym.name}</option>)}</select></label>
-          {error && <p role="alert" className="form-message error-copy">{error}</p>}
+          {status === 'ready' && error && <p role="alert" className="form-message error-copy">{error}</p>}
           <div className="form-actions"><button type="button" className="text-button" disabled={isSaving} onClick={closePanel}>Cancel</button><ActionButton type="button" disabled={isSaving} onClick={() => void createDuplicate()}>{isSaving ? 'Duplicating…' : 'Create duplicate'}</ActionButton></div>
         </Panel>
       )}
@@ -466,9 +524,10 @@ export function WorkoutPlanner({
       {editor && (
         <Panel className="workout-editor" aria-labelledby="workout-editor-title">
           <h3 id="workout-editor-title">{editor.template ? `Edit ${editor.template.name}` : 'Add a workout'}</h3>
+          {draftOwner.getRecoveryMessage() && <p role="status">{draftOwner.getRecoveryMessage()}</p>}
           <form onSubmit={(event) => void save(event)}>
             <div className="workout-basics">
-              <label>Workout name<input required autoFocus disabled={isSaving} value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
+              <label>Workout name<input ref={controlRef('name')} required autoFocus disabled={isSaving} value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
               <label>Gym<select required disabled={isSaving} value={editor.gymId} onChange={(event) => setEditor({ ...editor, gymId: event.target.value })}><option value="">Choose a gym</option>{gyms.map((gym) => <option key={gym.id} value={gym.id}>{gym.name}</option>)}</select></label>
             </div>
 
@@ -502,8 +561,8 @@ export function WorkoutPlanner({
                         <li key={set.id}>
                           <span className="set-number">{setIndex + 1}</span>
                           <label>Set {setIndex + 1} type<select ref={controlRef(setControlKey(exercise.id, set.id, 'type'))} aria-label={`Set ${setIndex + 1} type — ${context}`} disabled={isSaving} value={set.kind} onChange={(event) => updateSet(exerciseIndex, setIndex, 'kind', event.target.value)}><option value="warm-up">Warm-up</option><option value="working">Working</option><option value="drop">Drop</option></select></label>
-                          <label>Weight ({settings.weightUnit})<input aria-label={`Set ${setIndex + 1} weight (${settings.weightUnit}) — ${context}`} type="number" min="0" step="0.1" disabled={isSaving} value={Number(displayWeight(set.weight, settings.weightUnit).toFixed(1))} onChange={(event) => updateSet(exerciseIndex, setIndex, 'weight', event.target.value)} /></label>
-                          <label>Reps<input aria-label={`Set ${setIndex + 1} reps — ${context}`} type="number" min="1" step="1" disabled={isSaving} value={set.reps} onChange={(event) => updateSet(exerciseIndex, setIndex, 'reps', event.target.value)} /></label>
+                          <label>Weight ({editUnit})<input ref={controlRef(setControlKey(exercise.id, set.id, 'weight'))} aria-label={`Set ${setIndex + 1} weight (${editUnit}) — ${context}`} type="number" min="0" step="0.1" disabled={isSaving} value={snapshot?.numericBuffers[setControlKey(exercise.id, set.id, 'weight')] ?? Number(displayWeight(set.weight, editUnit).toFixed(1))} onChange={(event) => updateSet(exerciseIndex, setIndex, 'weight', event.target.value)} /></label>
+                                                    <label>Reps<input ref={controlRef(setControlKey(exercise.id, set.id, 'reps'))} aria-label={`Set ${setIndex + 1} reps — ${context}`} type="number" min="1" step="1" disabled={isSaving} value={snapshot?.numericBuffers[setControlKey(exercise.id, set.id, 'reps')] ?? set.reps} onChange={(event) => updateSet(exerciseIndex, setIndex, 'reps', event.target.value)} /></label>
                           <div className="compact-actions">
                             <button ref={controlRef(setControlKey(exercise.id, set.id, 'up'))} type="button" aria-label={`Move set ${setIndex + 1} up — ${context}`} disabled={isSaving || setIndex === 0} onClick={() => moveSet(exerciseIndex, setIndex, -1)}><ArrowUp size={16} aria-hidden="true" /></button>
                             <button ref={controlRef(setControlKey(exercise.id, set.id, 'down'))} type="button" aria-label={`Move set ${setIndex + 1} down — ${context}`} disabled={isSaving || setIndex === exercise.sets.length - 1} onClick={() => moveSet(exerciseIndex, setIndex, 1)}><ArrowDown size={16} aria-hidden="true" /></button>
@@ -517,8 +576,8 @@ export function WorkoutPlanner({
                 )
               })}
             </div>
-            {error && <p role="alert" className="form-message error-copy">{error}</p>}
-            <div className="form-actions"><button type="button" className="text-button" disabled={isSaving} onClick={closePanel}>Cancel</button><ActionButton type="submit" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save workout'}</ActionButton></div>
+            {status === 'ready' && error && <p role="alert" className="form-message error-copy">{error}</p>}
+            <div className="form-actions"><button type="button" className="text-button" disabled={draftOwner.getLibraryBusy()} onClick={closePanel}>Cancel</button><ActionButton type="submit" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save workout'}</ActionButton></div>
           </form>
         </Panel>
       )}
@@ -529,6 +588,7 @@ export function WorkoutPlanner({
           <div ref={exerciseDialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="planner-exercise-title" className="confirm-dialog" onKeyDown={handleExerciseDialogKeyDown}>
             <h3 id="planner-exercise-title">Create a shared exercise</h3>
             <p>Save adds this exercise to your library and your current workout draft.</p>
+            {draftOwner.getRecoveryMessage() && <p role="status">{draftOwner.getRecoveryMessage()}</p>}
             <form onSubmit={(event) => void saveNewExercise(event)}>
               <label>Exercise name<input autoFocus required disabled={isCreating} value={newExercise.name} onChange={(event) => setNewExercise({ ...newExercise, name: event.target.value })} /></label>
               <label>Muscle group<input disabled={isCreating} value={newExercise.muscleGroup} onChange={(event) => setNewExercise({ ...newExercise, muscleGroup: event.target.value })} /></label>
@@ -548,7 +608,7 @@ export function WorkoutPlanner({
             <h3 id="delete-workout-title">Delete {pendingDelete.name}?</h3>
             <p>This removes only this workout template. Shared exercises and other copies stay available.</p>
             {isSaving && <p role="status" className="form-message">Deleting workout…</p>}
-            {error && <p role="alert" className="form-message error-copy">{error}</p>}
+            {status === 'ready' && error && <p role="alert" className="form-message error-copy">{error}</p>}
             <div className="form-actions"><button ref={keepDeleteButton} type="button" className="text-button" disabled={isSaving} onClick={closeDeleteDialog}>Keep workout</button><button ref={confirmDeleteButton} type="button" className="danger-confirm" disabled={isSaving} onClick={() => void deleteTemplate()}>{isSaving ? 'Deleting…' : 'Delete workout'}</button></div>
           </div>
         </div>

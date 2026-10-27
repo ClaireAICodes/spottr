@@ -22,7 +22,7 @@ describe('Spottr application shell', () => {
       expect.stringContaining('Home'),
       expect.stringContaining('Exercises'),
       expect.stringContaining('Workouts'),
-      expect.stringContaining('History'),
+      expect.stringContaining('Gyms'),
       expect.stringContaining('Settings'),
     ])
     expect(screen.getByRole('tab', { name: /home/i })).toHaveAttribute('aria-selected', 'true')
@@ -40,7 +40,10 @@ describe('Spottr application shell', () => {
     expect(train).toHaveFocus()
     expect(train).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('heading', { level: 1, name: 'Exercises' })).toBeInTheDocument()
-    expect(screen.getByRole('tabpanel', { name: 'Exercises' })).toBeInTheDocument()
+    // Data-backed panels mount only after asynchronous startup recovery is ready.
+    expect(await screen.findByRole('tabpanel', { name: 'Exercises' })).toBeInTheDocument()
+    expect(train).toHaveFocus()
+    expect(train).toHaveAttribute('aria-selected', 'true')
   })
 
   it('renders the empty start and resume states on Home', async () => {
@@ -49,7 +52,7 @@ describe('Spottr application shell', () => {
     const sessionService = createSessionService(createMemorySessionRepository(), workoutService, exerciseService)
     render(<App workoutService={workoutService} exerciseService={exerciseService} sessionService={sessionService} />)
 
-    expect(screen.getByRole('heading', { name: /ready when you are/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /ready when you are/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /resume your session/i })).toBeInTheDocument()
     expect(await screen.findByText(/start a saved workout to create a session snapshot/i)).toBeInTheDocument()
   })
@@ -263,27 +266,58 @@ describe('gym management journey', () => {
     let removeCalls = 0
     let releaseRemove: () => void = () => undefined
     const waitForRemove = new Promise<void>((resolve) => { releaseRemove = resolve })
+    let removed = false
+    let refreshEntered = false
+    let releaseRefresh: () => void = () => undefined
+    const waitForRefresh = new Promise<void>((resolve) => { releaseRefresh = resolve })
     const service = {
       ...baseService,
+      async list() {
+        if (removed) {
+          refreshEntered = true
+          await waitForRefresh
+        }
+        return baseService.list()
+      },
       async remove(id: string) {
         removeCalls += 1
         await waitForRemove
-        return baseService.remove(id)
+        await baseService.remove(id)
+        removed = true
       },
     }
-    render(<App gymService={service} workoutService={createWorkoutService(createMemoryWorkoutRepository())} />)
-    await user.click(await screen.findByRole('button', { name: /manage gyms/i }))
-    await user.click(screen.getByRole('button', { name: /delete pending/i }))
-    const confirm = screen.getByRole('button', { name: /delete gym/i })
-    await user.click(confirm)
-    fireEvent.click(confirm)
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(removeCalls).toBe(1))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /keep gym/i })).toBeDisabled()
-    releaseRemove()
-    expect(await screen.findByRole('button', { name: /back to home/i })).toHaveFocus()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    const view = render(<App gymService={service} workoutService={createWorkoutService(createMemoryWorkoutRepository())} />)
+    try {
+      await user.click(await screen.findByRole('button', { name: /manage gyms/i }))
+      const back = screen.getByRole('button', { name: /back to home/i })
+      await user.click(screen.getByRole('button', { name: /delete pending/i }))
+      const confirm = screen.getByRole('button', { name: /delete gym/i })
+      await user.click(confirm)
+      fireEvent.click(confirm)
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(removeCalls).toBe(1))
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /keep gym/i })).toBeDisabled()
+      releaseRemove()
+      await waitFor(() => expect(refreshEntered).toBe(true))
+      expect(await screen.findByRole('button', { name: /back to home/i })).toBe(back)
+      expect(back).toBeInTheDocument()
+      expect(back).toBeDisabled()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      // Presence is not settlement: the same live button is still disabled.
+      expect(back).not.toHaveFocus()
+      releaseRefresh()
+      await waitFor(() => expect(back).toHaveFocus())
+      expect(back).toBeEnabled()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByRole('article', { name: 'Pending' })).not.toBeInTheDocument()
+      expect(removeCalls).toBe(1)
+    } finally {
+      // Already-created gates also release a service entry arriving after unmount.
+      releaseRemove()
+      releaseRefresh()
+      view.unmount()
+    }
   })
 
   it('requires confirmation before deleting a gym', async () => {
@@ -691,6 +725,7 @@ describe('active workout session journey', () => {
 
     await user.click(await screen.findByRole('button', { name: /start workout at north gym/i }))
     await user.click(screen.getByRole('button', { name: /start lower strength/i }))
+    await user.click(screen.getByRole('button', { name: 'Workout overview' }))
     const weights = screen.getAllByLabelText(/back squat set \d weight/i)
     const reps = screen.getAllByLabelText(/back squat set \d reps/i)
     await user.clear(weights[0]); await user.type(weights[0], '85')
@@ -1096,7 +1131,8 @@ describe('active workout session journey', () => {
 
     firstRender.unmount()
     render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
-    await user.click(screen.getByRole('tab', { name: /history/i }))
+    await user.click(screen.getByRole('tab', { name: /workouts/i }))
+    await user.click(await screen.findByRole('button', { name: /^History$/ }))
     const historyItem = await screen.findByRole('article', { name: /lower strength/i })
     expect(historyItem).toHaveTextContent('North Gym')
     expect(historyItem).toHaveTextContent('400 kg')
@@ -1224,6 +1260,7 @@ describe('active workout session journey', () => {
     firstRender.unmount()
     render(<App gymService={gymService} exerciseService={exerciseService} workoutService={workoutService} sessionService={sessionService} />)
     await user.click(await screen.findByRole('button', { name: /resume flexible strength/i }))
+    await user.click(screen.getByRole('button', { name: 'Workout overview' }))
     expect(screen.getAllByRole('heading', { level: 3 }).map(({ textContent }) => textContent)).toEqual(['Cable Row', 'Back Squat'])
     expect(await workoutService.get(template.id)).toEqual(template)
   })
