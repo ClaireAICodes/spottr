@@ -437,6 +437,7 @@ function ReadyApp({ dataset, ready, activeTab, setActiveTab }: { dataset: Omit<D
             selectedGym={selectedGym}
             gymStatus={gymStatus}
             onManageGyms={() => setIsManagingGyms(true)}
+            onCreateWorkout={() => navigate({ kind: 'workouts' })}
             onRetry={loadSelectedGym}
             templates={sessionTemplates}
             activeSession={activeSession}
@@ -500,6 +501,7 @@ function HomeFrames({
   selectedGym,
   gymStatus,
   onManageGyms,
+  onCreateWorkout,
   onRetry,
   templates,
   activeSession,
@@ -516,6 +518,7 @@ function HomeFrames({
   selectedGym: Gym | null
   gymStatus: 'loading' | 'ready' | 'error'
   onManageGyms: () => void
+  onCreateWorkout: () => void
   onRetry: () => void
   templates: WorkoutTemplate[]
   activeSession: WorkoutSession | null
@@ -583,9 +586,13 @@ function HomeFrames({
         ) : (
           <p>Add a gym before starting so your future routines match the equipment around you.</p>
         )}
-        <ActionButton disabled={gymStatus !== 'ready' || !selectedGym || templateStatus !== 'ready' || templates.length === 0 || Boolean(activeSession) || Boolean(sessionLoadError)} onClick={() => setIsChoosingWorkout(true)}>
+        {gymStatus === 'ready' && !selectedGym && !activeSession && !sessionLoadError ? (
+          <ActionButton onClick={onManageGyms}>Add your first gym</ActionButton>
+        ) : gymStatus === 'ready' && selectedGym && templateStatus === 'ready' && templates.length === 0 && !activeSession && !sessionLoadError ? (
+          <ActionButton onClick={onCreateWorkout}>Create workout</ActionButton>
+        ) : <ActionButton disabled={gymStatus !== 'ready' || !selectedGym || templateStatus !== 'ready' || templates.length === 0 || Boolean(activeSession) || Boolean(sessionLoadError)} onClick={() => setIsChoosingWorkout(true)}>
           <Play size={18} fill="currentColor" aria-hidden="true" /> {selectedGym ? `Start workout at ${selectedGym.name}` : 'Choose a gym to start'}
-        </ActionButton>
+        </ActionButton>}
         {isChoosingWorkout && !activeSession && (
           <div className="workout-choices" aria-label="Choose a workout">
             {templates.map((template) => <button key={template.id} type="button" onClick={() => void start(template.id)}>Start {template.name}</button>)}

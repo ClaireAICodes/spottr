@@ -84,11 +84,13 @@ describe('gym management journey', () => {
     await user.click(within(screen.getByRole('article', { name: 'Downtown Strength' })).getByRole('button', { name: /select/i }))
     await user.click(screen.getByRole('button', { name: /back to home/i }))
 
-    expect(screen.getByRole('button', { name: /start workout at downtown strength/i })).toBeInTheDocument()
+    expect(screen.getByText('Downtown Strength', { selector: 'strong' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Create workout' })).toBeEnabled()
 
     firstRender.unmount()
     render(<App gymService={service} />)
-    expect(await screen.findByRole('button', { name: /start workout at downtown strength/i })).toBeInTheDocument()
+    expect(await screen.findByText('Downtown Strength', { selector: 'strong' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Create workout' })).toBeEnabled()
   })
 
   it('falls back to manual entry when location permission is denied', async () => {
@@ -237,10 +239,13 @@ describe('gym management journey', () => {
     const view = render(<App gymService={firstService} />)
 
     view.rerender(<App gymService={secondService} />)
-    expect(await screen.findByRole('button', { name: /start workout at current gym/i })).toBeInTheDocument()
+    expect(await screen.findByText('Current Gym', { selector: 'strong' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Create workout' })).toBeEnabled()
     releaseOld(firstGym)
     await act(async () => { await oldSelection })
-    expect(screen.getByRole('button', { name: /start workout at current gym/i })).toBeInTheDocument()
+    expect(screen.getByText('Current Gym', { selector: 'strong' })).toBeInTheDocument()
+    expect(screen.queryByText('Old Gym', { selector: 'strong' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create workout' })).toBeEnabled()
   })
 
   it('announces selection and deletion failures without hiding existing data', async () => {
