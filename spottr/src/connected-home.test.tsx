@@ -21,6 +21,38 @@ async function fixture() {
 }
 
 describe('connected Home journey', () => {
+  it('distinguishes remaining work from explicit skips through return, logging and partial finish', async () => {
+    window.location.hash = '#/home'
+    const f = await fixture()
+    const template = await f.workoutService.create({ name: 'Progress Workout', gymId: f.template.gymId, exercises: [{ exerciseId: f.exercise.id, sets: [
+      { kind: 'working', weight: 40, reps: 8 },
+      { kind: 'working', weight: 40, reps: 8 },
+      { kind: 'working', weight: 40, reps: 8 },
+    ] }] })
+    await f.sessionService.start(template.id, 'Connected Gym')
+    const user = userEvent.setup()
+    render(<App {...f} />)
+    await user.click(await screen.findByRole('button', { name: 'Resume Progress Workout' }))
+    expect(screen.getByText('0 of 3 sets logged · 0 skipped · 3 remaining')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Skip Original Row set 1' }))
+    expect(await screen.findByText('0 of 3 sets logged · 1 skipped · 2 remaining')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Return to Original Row set 1' }))
+    expect(await screen.findByText('0 of 3 sets logged · 0 skipped · 3 remaining')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Log Original Row set 1' }))
+    expect(await screen.findByText('1 of 3 sets logged · 0 skipped · 2 remaining')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Skip Original Row set 2' }))
+    expect(await screen.findByText('1 of 3 sets logged · 1 skipped · 1 remaining')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Finish workout' }))
+    await user.click(screen.getByRole('button', { name: 'Keep training' }))
+    expect(screen.getByText('1 of 3 sets logged · 1 skipped · 1 remaining')).toBeInTheDocument()
+    expect(await f.sessionService.listHistory()).toEqual([])
+    await user.click(screen.getByRole('button', { name: 'Finish workout' }))
+    await user.click(screen.getByRole('button', { name: 'Finish and skip 2 sets' }))
+    await screen.findByRole('heading', { name: 'Workout saved' })
+    expect((await f.sessionService.listHistory())[0].summary).toMatchObject({ completedSets: 1, skippedSets: 2, volume: 320 })
+    expect(await f.workoutService.get(template.id)).toEqual(template)
+  })
+
   it('keeps equal local set IDs in distinct summary occurrences and restores the chosen result only', async () => {
     const f = await fixture()
     const active = await f.sessionService.start(f.template.id, 'Connected Gym')

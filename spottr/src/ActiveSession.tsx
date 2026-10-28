@@ -91,7 +91,8 @@ export function ActiveSession({
   const allSets = session.exercises.flatMap((exercise) => exercise.sets)
   const completedSets = allSets.filter(({ completedAt }) => completedAt).length
   const skippedSets = allSets.filter(({ skippedAt }) => skippedAt).length
-  const remainingSets = allSets.length - completedSets
+  const unfinishedSets = allSets.length - completedSets
+  const remainingSets = allSets.filter(set => !set.completedAt && !set.skippedAt).length
 
   useEffect(() => { if (!confirmation) sessionTitle.current?.focus() }, [])
   useEffect(() => {
@@ -354,7 +355,7 @@ export function ActiveSession({
         <div>
           <p className="eyebrow">Active session</p>
           <h2 id="active-session-title" ref={sessionTitle} tabIndex={-1}>{session.name}</h2>
-          <p>{completedSets} of {allSets.length} sets logged · {skippedSets} skipped</p>
+          <p>{completedSets} of {allSets.length} sets logged · {skippedSets} skipped · {remainingSets} remaining</p>
         </div>
         <Dumbbell size={30} aria-hidden="true" />
       </div>
@@ -449,19 +450,19 @@ export function ActiveSession({
         ))}
       </div>
       <div className="finish-session">
-        <ActionButton id="finish-session-workout" ref={finishButton} disabled={pendingSetIds.size > 0 || pendingExerciseId !== null || isFinishing || isStoppingRest} onClick={() => remainingSets > 0 ? setIsConfirmingFinish(true) : void finish()}>
+        <ActionButton id="finish-session-workout" ref={finishButton} disabled={pendingSetIds.size > 0 || pendingExerciseId !== null || isFinishing || isStoppingRest} onClick={() => unfinishedSets > 0 ? setIsConfirmingFinish(true) : void finish()}>
           <Flag size={18} aria-hidden="true" /> Finish workout
         </ActionButton>
-        <p>{remainingSets > 0 ? `${remainingSets} unfinished ${remainingSets === 1 ? 'set' : 'sets'} will be saved as skipped.` : 'Every planned set is logged.'}</p>
+        <p>{unfinishedSets > 0 ? `${unfinishedSets} unfinished ${unfinishedSets === 1 ? 'set' : 'sets'} will be saved as skipped.` : 'Every planned set is logged.'}</p>
       </div>
       {isConfirmingFinish && (
         <div className="dialog-backdrop">
           <div role="dialog" aria-modal="true" aria-labelledby="finish-title" className="confirm-dialog" onKeyDown={handleFinishDialogKeyDown}>
             <h3 id="finish-title">Finish this workout?</h3>
-            <p>Your {remainingSets} unfinished {remainingSets === 1 ? 'set' : 'sets'} will be saved as skipped. Logged work stays unchanged.</p>
+            <p>Your {unfinishedSets} unfinished {unfinishedSets === 1 ? 'set' : 'sets'} will be saved as skipped. Logged work stays unchanged.</p>
             <div className="form-actions">
               <button ref={keepTrainingButton} type="button" className="text-button" disabled={isFinishing} onClick={closeFinishDialog}>Keep training</button>
-              <ActionButton ref={confirmFinishButton} disabled={isFinishing} onClick={() => void finish()}>{isFinishing ? 'Saving…' : `Finish and skip ${remainingSets} ${remainingSets === 1 ? 'set' : 'sets'}`}</ActionButton>
+              <ActionButton ref={confirmFinishButton} disabled={isFinishing} onClick={() => void finish()}>{isFinishing ? 'Saving…' : `Finish and skip ${unfinishedSets} ${unfinishedSets === 1 ? 'set' : 'sets'}`}</ActionButton>
             </div>
           </div>
         </div>
