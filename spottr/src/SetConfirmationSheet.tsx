@@ -29,7 +29,7 @@ export function SetConfirmationSheet({ label, unit, value, pending, error, onCha
     }}>
       <h3 id="set-confirmation-title" ref={heading} tabIndex={-1}>Confirm {label}</h3>
       <p>Set complete. Confirm what you performed before saving.</p>
-      <label>Actual weight ({unit})<input type="number" min="0" step="0.1" value={value.weight} disabled={pending} onChange={event => onChange({ ...value, weight: event.target.value })} /></label>
+      <label>Actual weight ({unit})<input type="text" inputMode="decimal" value={value.weight} disabled={pending} onChange={event => onChange({ ...value, weight: event.target.value })} /></label>
       <label>Actual reps<input type="number" min="1" step="1" value={value.reps} disabled={pending} onChange={event => onChange({ ...value, reps: event.target.value })} /></label>
       {error && <p role="alert" className="form-message error-copy">{error}</p>}
       <div className="form-actions">

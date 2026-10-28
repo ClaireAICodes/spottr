@@ -204,6 +204,10 @@ export function ActiveSession({
       setError('Enter a set weight')
       return
     }
+    if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(draft.weight.trim()) || !Number.isFinite(Number(draft.weight))) {
+      setError('Enter a weight of zero or more.')
+      return
+    }
     logInFlight.current = true
     setPendingSetIds((current) => new Set(current).add(setId))
     setError('')
