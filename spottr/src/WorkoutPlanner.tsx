@@ -413,6 +413,18 @@ export function WorkoutPlanner({
   async function save(event: FormEvent) {
       event.preventDefault()
       if (!editor || saveInFlight.current || draftOwner.getBusy()) return
+      const current = draftOwner.getSnapshot()
+      for (const exercise of editor.exercises) {
+        for (const set of exercise.sets) {
+          const key = setControlKey(exercise.id, set.id, 'weight')
+          const buffer = current?.numericBuffers[key]
+          if (buffer !== undefined && !buffer.trim()) {
+            setError('Enter a weight of zero or more.')
+            editorControls.current.get(key)?.focus()
+            return
+          }
+        }
+      }
       const epoch = draftOwner.getIntentEpoch()
       const owns = () => mounted.current && draftOwner.getIntentEpoch() === epoch
       saveInFlight.current = true

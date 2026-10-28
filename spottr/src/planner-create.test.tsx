@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { WorkoutPlanner } from './WorkoutPlanner'
 import { createExerciseService, createMemoryExerciseRepository } from './exercises'
@@ -17,6 +17,28 @@ async function setup() {
   await waitFor(() => expect(screen.getByRole('button', { name: 'Add workout' })).toBeEnabled())
   return { user, gym, exerciseService, workoutService }
 }
+
+it('keeps an empty planned weight unsaved until the user explicitly enters zero', async () => {
+  const { user, workoutService } = await setup()
+  await user.click(screen.getByRole('button', { name: 'Add workout' }))
+  await user.type(screen.getByLabelText('Workout name'), 'Explicit zero')
+  await user.click(screen.getByRole('button', { name: 'Create new exercise' }))
+  await user.type(screen.getByLabelText('Exercise name'), 'Press')
+  await user.click(screen.getByRole('button', { name: 'Save exercise' }))
+  const weight = await screen.findByLabelText('Set 1 weight (kg) — Press, exercise 1')
+  await user.clear(weight)
+  expect(weight).toHaveValue(null)
+  fireEvent.submit(screen.getByLabelText('Workout name').closest('form')!)
+  expect(await screen.findByRole('alert')).toHaveTextContent('Enter a weight of zero or more.')
+  expect(await workoutService.list()).toEqual([])
+  expect(weight).toHaveValue(null)
+  await user.type(weight, '0')
+  await user.click(screen.getByRole('button', { name: 'Save workout' }))
+  await screen.findByRole('button', { name: 'Edit Explicit zero' })
+  const saved = await workoutService.list()
+  expect(saved).toHaveLength(1)
+  expect(saved[0].exercises[0].sets[0]).toMatchObject({ weight: 0, reps: 8 })
+})
 
 it('creates from an empty library, selects exactly one shared exercise and saves its reference', async () => {
   const { user, gym, exerciseService, workoutService } = await setup()
