@@ -127,5 +127,8 @@ it('saves Row associations, reopens directly from automatic Edit focus and retur
   expect(screen.queryByRole('article', { name: 'Squat sets' })).not.toBeInTheDocument()
   expect(within(screen.getByRole('article', { name: 'Row sets' })).getByRole('spinbutton', { name: /weight/ })).toHaveValue(17)
   await enter('Cancel')
+  expect(screen.getByRole('button', { name: 'Keep editing' })).toHaveFocus()
+  await user.tab()
+  await user.keyboard('{Enter}')
   await waitFor(() => focused('button', 'Edit Strength'))
 })

@@ -505,6 +505,7 @@ describe('workout template journey', () => {
     expect(screen.getByRole('button', { name: /add cable row/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /add back squat/i })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /cancel/i }))
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
 
     const originalCard = screen.getByRole('article', { name: 'Original' })
     const deleteTrigger = within(originalCard).getByRole('button', { name: /delete/i })
@@ -657,6 +658,7 @@ describe('workout template journey', () => {
     ])
     expect(within(screen.getByRole('article', { name: /back squat sets/i })).getByLabelText(/set 3 type/i)).toHaveValue('drop')
     await user.click(screen.getByRole('button', { name: /cancel/i }))
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
 
     await user.click(within(screen.getByRole('article', { name: 'Lower Strength' })).getByRole('button', { name: /duplicate/i }))
     await user.selectOptions(screen.getByLabelText(/duplicate to gym/i), south.id)
@@ -679,6 +681,7 @@ describe('workout template journey', () => {
     expect(screen.getByRole('article', { name: /back squat updated sets/i })).toBeInTheDocument()
     expect(screen.queryByRole('article', { name: /back squat variation sets/i })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /cancel/i }))
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
 
     const independentCopy = screen.getByRole('article', { name: 'Lower Strength copy' })
     await user.click(within(independentCopy).getByRole('button', { name: /edit/i }))

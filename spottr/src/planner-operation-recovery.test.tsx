@@ -109,6 +109,7 @@ it('held existing-template Save survives remount, discard and reopen at the same
   render(<WorkoutPlanner {...props} />)
   expect(await screen.findByLabelText('Workout name')).toBeDisabled()
   await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Discard' }))
   await userEvent.click(await screen.findByRole('button', { name: `Edit ${template.name}` }))
   const reopened = draftOwner.getSnapshot()!
   expect(reopened.revision).toBe(captured.revision)
@@ -118,6 +119,74 @@ it('held existing-template Save survives remount, discard and reopen at the same
   expect(draftOwner.getSnapshot()?.editorIntentId).toBe(reopened.editorIntentId)
   expect(screen.getByLabelText('Workout name')).toHaveValue(template.name)
   expect(screen.getByLabelText('Workout name')).not.toBeDisabled()
+})
+
+it('settles an open discard confirmation after held Save with live focus and one durable workout', async () => {
+  const { props, draftOwner } = await setup()
+  const write = barrier()
+  const refresh = barrier()
+  const create = props.workoutService.create
+  const list = props.workoutService.list
+  let calls = 0
+  let refreshing = false
+  let refreshEntered = false
+  props.workoutService.create = async (...args) => { calls++; write.reached(); await write.held; const saved = await create(...args); refreshing = true; return saved }
+  props.workoutService.list = async () => { if (refreshing) { refreshEntered = true; refresh.reached(); await refresh.held } return list() }
+  const view = render(<WorkoutPlanner {...props} />)
+  try {
+    await userEvent.click(await screen.findByRole('button', { name: 'Save workout' }))
+    await waitFor(() => expect(calls).toBe(1))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('dialog', { name: 'Discard draft?' })).toBeVisible()
+    await act(async () => { write.release(); await write.held })
+    await waitFor(() => expect(draftOwner.getBusy()).toBe(false))
+    await waitFor(() => expect(refreshEntered).toBe(true))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard draft?' })).not.toBeInTheDocument())
+    expect(screen.getByText('Workout saved.')).toBeVisible()
+    await act(async () => { refresh.release(); await refresh.held })
+    const edit = await screen.findByRole('button', { name: 'Edit Revision one' })
+    await waitFor(() => expect(edit).toHaveFocus())
+    expect(edit.isConnected).toBe(true)
+    expect(calls).toBe(1)
+    expect(await list()).toHaveLength(1)
+    view.unmount()
+    await draftOwner.recover('authoring', '0')
+    render(<WorkoutPlanner {...props} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit Revision one' }))
+    expect(screen.getByLabelText('Workout name')).toHaveValue('Revision one')
+    expect(screen.getByLabelText('Set 1 weight (kg) — Row, exercise 1')).toHaveValue(20)
+  } finally { write.release(); refresh.release(); view.unmount() }
+})
+
+it.each(['revision', 'intent'] as const)('held Save settlement preserves a newer %s behind an open discard confirmation', async kind => {
+  const { props, draftOwner } = await setup()
+  const gate = barrier()
+  const create = props.workoutService.create
+  let calls = 0
+  props.workoutService.create = async (...args) => { calls++; gate.reached(); await gate.held; return create(...args) }
+  const view = render(<WorkoutPlanner {...props} />)
+  try {
+    await userEvent.click(await screen.findByRole('button', { name: 'Save workout' }))
+    await waitFor(() => expect(calls).toBe(1))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    const captured = draftOwner.getSnapshot()!
+    act(() => draftOwner.edit({ ...captured, revision: captured.revision + 1, editorIntentId: kind === 'intent' ? 'replacement-intent' : captured.editorIntentId, value: { ...captured.value, name: 'Successor edits' } }))
+    await act(async () => { gate.release(); await gate.held })
+    await waitFor(() => expect(draftOwner.getBusy()).toBe(false))
+    expect(screen.getByRole('dialog', { name: 'Discard draft?' })).toBeVisible()
+    expect(screen.queryByText('Workout saved.')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /^Discard$/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not discard the exact draft revision')
+    await userEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText('Workout name')).toHaveValue('Successor edits')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus())
+    expect(calls).toBe(1)
+    expect((await props.workoutService.list()).map(item => item.name)).toEqual(['Revision one'])
+    await draftOwner.flushDraft('authoring')
+    view.unmount()
+    render(<WorkoutPlanner {...props} />)
+    expect(await screen.findByLabelText('Workout name')).toHaveValue('Successor edits')
+  } finally { gate.release(); view.unmount() }
 })
 
 it('remounted nested completion refresh failure retains committed library ID and refresh retry does not replay creation', async () => {

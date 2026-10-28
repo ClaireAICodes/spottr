@@ -130,20 +130,70 @@ export function WorkoutPlanner({
     }
   }, [savedFocusId, status, isSaving])
 
-  async function closePanel() {
-    const epoch = draftOwner.getIntentEpoch()
-    const draft = draftOwner.getSnapshot()
-    if (draft) {
-      const result = await draftOwner.flushDraft(draft.id)
-      if (result.status !== 'saved' || !(await draftOwner.removeCommitted(draft.id, draft.revision, draft.editorIntentId))) {
-        if (mounted.current) setError('Could not discard the exact draft revision. Your changes are still here.')
-        return
-      }
+  const [pendingDiscard, setPendingDiscard] = useState<{ draft: WorkoutDraftRecord; epoch: number } | null>(null)
+  const [discarding, setDiscarding] = useState(false)
+  const discardInFlight = useRef(false)
+  const discardDialog = useRef<HTMLDivElement>(null)
+  const keepEditingButton = useRef<HTMLButtonElement>(null)
+  const discardTrigger = useRef<HTMLButtonElement | null>(null)
+  const [saveConfirmation, setSaveConfirmation] = useState('')
+
+  useEffect(() => {
+    // Save owns exact-draft cleanup, including when this view was remounted.
+    // A replacement/revised draft must keep its own confirmation and edits.
+    if (!pendingDiscard || snapshot || busy || discardInFlight.current || draftOwner.getIntentEpoch() !== pendingDiscard.epoch) return
+    const committed = draftOwner.getCommittedWorkout()
+    if (!committed) return
+    setPendingDiscard(null)
+    setError('')
+    setSaveConfirmation('Workout saved.')
+    setSavedFocusId(committed.id)
+  }, [pendingDiscard, snapshot, busy, draftOwner])
+
+  function keepEditing() {
+    if (discardInFlight.current) return
+    setPendingDiscard(null)
+    queueMicrotask(() => { if (discardTrigger.current?.isConnected) discardTrigger.current.focus() })
+  }
+
+  useEffect(() => {
+    if (pendingDiscard) {
+      if (discarding) discardDialog.current?.focus()
+      else keepEditingButton.current?.focus()
     }
-    if (!mounted.current || draftOwner.getIntentEpoch() !== epoch) return
+  }, [pendingDiscard, discarding])
+
+  async function closePanel() {
     setDuplicate(null)
     setError('')
-    queueMicrotask(() => { if (mounted.current && draftOwner.getIntentEpoch() === epoch) panelReturnFocus.current() })
+    panelReturnFocus.current()
+  }
+
+  async function discardDraft() {
+    if (!pendingDiscard || discardInFlight.current || draftOwner.getLibraryBusy()) return
+    const { draft, epoch } = pendingDiscard
+    const matches = () => {
+      const current = draftOwner.getSnapshot()
+      return draftOwner.getIntentEpoch() === epoch && current?.id === draft.id && current.revision === draft.revision && current.editorIntentId === draft.editorIntentId
+    }
+    discardInFlight.current = true
+    setDiscarding(true)
+    setError('')
+    try {
+      if (!matches()) throw new Error('changed')
+      const result = await draftOwner.flushDraft(draft.id)
+      if (result.status !== 'saved' || !matches() || !(await draftOwner.removeCommitted(draft.id, draft.revision, draft.editorIntentId))) throw new Error('changed')
+      if (!mounted.current) return
+      if (draftOwner.getIntentEpoch() !== epoch) throw new Error('changed')
+      setPendingDiscard(null)
+      if (!draftOwner.getSnapshot()) queueMicrotask(() => { if (mounted.current && draftOwner.getIntentEpoch() === epoch) panelReturnFocus.current() })
+      else setError('The draft changed while discarding. Your newer changes are still here.')
+    } catch {
+      if (mounted.current) setError('Could not discard the exact draft revision. Your changes are still here. Keep editing, then Cancel again to review the current draft.')
+    } finally {
+      discardInFlight.current = false
+      if (mounted.current) setDiscarding(false)
+    }
   }
 
   async function load(owns = () => mounted.current, preserveOperationError = false) {
@@ -183,6 +233,7 @@ export function WorkoutPlanner({
   }, [libraryBusy])
 
   function openEditor(template: WorkoutTemplate | null) {
+    setSaveConfirmation('')
     panelReturnFocus.current = () => {
       if (template) editButtons.current.get(template.id)?.focus()
       else addWorkoutButton.current?.focus()
@@ -460,7 +511,7 @@ export function WorkoutPlanner({
 
   return (
     <section id="main-view" role="tabpanel" aria-labelledby="tab-workouts" className="workout-planner" onFocusCapture={revealNumericInput} onInputCapture={revealNumericInput}>
-      <div className="workout-planner-content" inert={pendingDelete || newExercise ? true : undefined} aria-hidden={pendingDelete || newExercise ? true : undefined}>
+      <div className="workout-planner-content" inert={pendingDelete || newExercise || pendingDiscard ? true : undefined} aria-hidden={pendingDelete || newExercise || pendingDiscard ? true : undefined}>
       <div className="section-heading workout-heading">
         <div>
           <p className="eyebrow">Gym-linked templates</p>
@@ -479,6 +530,7 @@ export function WorkoutPlanner({
             : `Library operation ${operation.operationId} has an unresolved outcome. Creation will not be replayed.`}
         </p>
       ))}
+      {saveConfirmation && !editor && <p role="status" className="form-message">{saveConfirmation}</p>}
       {status === 'loading' && <p role="status" className="state-message">Loading workouts…</p>}
       {isSaving && !pendingDelete && status !== 'loading' && <p role="status" className="form-message">{isVarying ? 'Creating exercise variation…' : duplicate ? 'Duplicating workout…' : 'Saving workout…'}</p>}
       {status === 'error' && <div role="alert" className="state-message error-state"><p>{error}</p><button type="button" className="text-button" onClick={() => void load()}>Try again</button></div>}
@@ -577,11 +629,32 @@ export function WorkoutPlanner({
               })}
             </div>
             {status === 'ready' && error && <p role="alert" className="form-message error-copy">{error}</p>}
-            <div className="form-actions"><button type="button" className="text-button" disabled={draftOwner.getLibraryBusy()} onClick={closePanel}>Cancel</button><ActionButton type="submit" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save workout'}</ActionButton></div>
+            <div className="form-actions"><button type="button" className="text-button" disabled={draftOwner.getLibraryBusy()} onClick={(event) => { const draft = draftOwner.getSnapshot(); if (!draft) return; discardTrigger.current = event.currentTarget; setError(''); setPendingDiscard({ draft: structuredClone(draft), epoch: draftOwner.getIntentEpoch() }) }}>Cancel</button><ActionButton type="submit" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save workout'}</ActionButton></div>
           </form>
         </Panel>
       )}
       </div>
+
+      {pendingDiscard && (
+        <div className="dialog-backdrop">
+          <div ref={discardDialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="discard-draft-title" className="confirm-dialog" onKeyDown={event => {
+            if (event.key === 'Escape') { event.preventDefault(); keepEditing() }
+            if (event.key === 'Tab') {
+              event.preventDefault()
+              const controls = Array.from(discardDialog.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])
+              if (!controls.length) { discardDialog.current?.focus(); return }
+              const index = controls.indexOf(document.activeElement as HTMLButtonElement)
+              controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus()
+            }
+          }}>
+            <h3 id="discard-draft-title">Discard draft?</h3>
+            <p>This removes only this draft. Saved workouts and already committed changes stay saved.</p>
+            {error && <p role="alert" className="form-message error-copy">{error}</p>}
+            {discarding && <p role="status">Discarding draft…</p>}
+            <div className="form-actions"><button ref={keepEditingButton} type="button" className="text-button" disabled={discarding} onClick={keepEditing}>Keep editing</button><button type="button" className="danger-confirm" disabled={discarding || libraryBusy} onClick={() => void discardDraft()}>Discard</button></div>
+          </div>
+        </div>
+      )}
 
       {newExercise && (
         <div className="dialog-backdrop">
