@@ -12,8 +12,10 @@ test('caches the loaded app shell and restores it without a network connection',
   await page.goto('/spottr/')
   await expect(page.locator('html')).toHaveAttribute('data-offline-ready', 'true')
 
-  const shellResourcesAreCached = await page.evaluate(async () => {
-    const shellCache = await caches.open((await caches.keys()).find(name => name.startsWith('spottr-shell-/spottr/-'))!)
+  const shellCacheSnapshot = await page.evaluate(async () => {
+    const cacheName = (await caches.keys()).find(name => name.startsWith('spottr-shell-/spottr/-'))!
+    const shellCache = await caches.open(cacheName)
+    const manifest = await (await shellCache.match('/spottr/manifest.webmanifest'))!.json()
     const resources = [
       window.location.href,
       ...[...document.querySelectorAll<HTMLScriptElement | HTMLLinkElement>('script[src], link[rel="stylesheet"]')]
@@ -21,10 +23,24 @@ test('caches the loaded app shell and restores it without a network connection',
       '/spottr/index.html',
       '/spottr/manifest.webmanifest',
       '/spottr/icons/spottr-192.png',
+      ...[...document.querySelectorAll<HTMLLinkElement>('link[href]')].map(element => element.href),
+      ...manifest.icons.map((icon: { src: string }) => new URL(icon.src, new URL('/spottr/manifest.webmanifest', location.origin)).href),
     ]
-    return (await Promise.all(resources.map((resource) => shellCache.match(resource)))).every(Boolean)
+    const checks = await Promise.all([...new Set(resources.map(resource => new URL(resource, location.href).href))]
+      .map(async url => ({ url, cached: Boolean(await shellCache.match(url)) })))
+    const registration = await navigator.serviceWorker.getRegistration()
+    return {
+      cacheName,
+      readiness: { ...document.documentElement.dataset },
+      worker: { active: registration?.active?.state, controller: navigator.serviceWorker.controller?.scriptURL },
+      keys: (await shellCache.keys()).map(request => request.url),
+      checks,
+      missing: checks.filter(check => !check.cached).map(check => check.url),
+    }
   })
-  expect(shellResourcesAreCached).toBe(true)
+  await test.info().attach('shell-cache-snapshot', { body: JSON.stringify(shellCacheSnapshot, null, 2), contentType: 'application/json' })
+  const shellResourcesAreCached = shellCacheSnapshot.checks.every(check => check.cached)
+  expect(shellResourcesAreCached, JSON.stringify(shellCacheSnapshot)).toBe(true)
 
   await context.setOffline(true)
   await page.reload()
@@ -74,7 +90,7 @@ test('keeps accurate readiness after cached offline reload and completes a saved
   await expect(page.getByRole('heading', { name: 'Workout saved' })).toBeVisible()
 
   await page.reload()
-  await page.getByRole('tab', { name: 'Workouts' }).click()
+  await page.getByRole('tab', { name: 'Workouts', exact: true }).click()
   await page.getByRole('button', { name: 'History', exact: true }).click()
   const savedSession = page.getByRole('article', { name: 'Offline Strength at Offline Gym' })
   await expect(savedSession).toContainText('255 kg')
@@ -227,8 +243,8 @@ test('publishes an installable manifest and offers the browser install prompt', 
     start_url: '/spottr/',
     scope: '/spottr/',
     display: 'standalone',
-    background_color: '#f4f0e8',
-    theme_color: '#f4f0e8',
+    background_color: '#F7F8F2',
+    theme_color: '#F7F8F2',
     icons: expect.arrayContaining([
       expect.objectContaining({ src: '/spottr/icons/spottr-192.png', sizes: '192x192', type: 'image/png' }),
       expect.objectContaining({ src: '/spottr/icons/spottr-512.png', sizes: '512x512', type: 'image/png' }),

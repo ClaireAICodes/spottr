@@ -5,7 +5,7 @@ export function replaceTransaction(database: IDBDatabase, stores: string[], sche
     const tx = database.transaction(stores, 'readwrite')
     let failure: unknown
     tx.oncomplete = () => resolve()
-    tx.onabort = () => reject(failure ?? tx.error ?? new Error('Replacement transaction aborted'))
+    tx.onabort = () => reject(failure ?? tx.error ?? new DOMException('Local storage transaction was cancelled. Your changes were not saved. Try again.', 'AbortError'))
     try { schedule(tx) } catch (error) { failure = error; tx.abort() }
   })
 }

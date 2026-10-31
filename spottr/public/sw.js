@@ -22,6 +22,11 @@ async function cacheAppShell() {
   if (!response.ok) throw new Error('Could not cache the app shell')
   const html = await response.clone().text()
   await cache.addAll([...new Set(shellUrls(html))])
+  // Install icons are manifest dependencies, not necessarily HTML links.
+  const manifestResponse = await cache.match(new URL('manifest.webmanifest', APP_BASE).href)
+  if (!manifestResponse?.ok) throw new Error('Could not cache the app manifest')
+  const manifest = await manifestResponse.json()
+  await cache.addAll([...new Set(manifest.icons.map(icon => new URL(icon.src, APP_BASE).href).filter(inScope))])
   await cache.put(APP_BASE.href, response.clone())
   await cache.put(INDEX_URL, response)
 }

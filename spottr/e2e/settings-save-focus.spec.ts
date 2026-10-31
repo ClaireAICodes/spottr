@@ -48,7 +48,14 @@ for (const failure of [false, true]) {
       expect(await page.evaluate(() => Reflect.get(window, 'settingsWrites'))).toBe(1)
       if (departure === 'tab') await page.keyboard.press('Tab')
       if (departure === 'pointer') await page.getByLabel('Weight unit').click()
-      if (departure === 'navigation') await page.getByRole('tab', { name: 'History', exact: true }).click()
+      if (departure === 'navigation') {
+        await page.getByRole('tab', { name: 'Workouts', exact: true }).click()
+        await page.getByRole('button', { name: 'History', exact: true }).click()
+        await expect(page.getByRole('heading', { name: 'Workout history', exact: true })).toBeVisible()
+        const back = page.getByRole('button', { name: 'Back to workouts', exact: true })
+        for (let i = 0; i < 25 && !(await back.evaluate(n => n === document.activeElement)); i++) await page.keyboard.press('Tab')
+        await expect(back).toBeFocused()
+      }
       const destination = await page.evaluate(() => { const n = document.activeElement; return { tag: n?.tagName, text: n?.textContent, id: n?.id } })
       await page.evaluate(() => Reflect.get(window, 'releaseSave')())
       if (departure !== 'navigation') {

@@ -68,10 +68,11 @@ test('starts, fast-logs, reloads, and resumes an independent session snapshot at
   await page.getByRole('button', { name: 'Resume Lower Strength' }).click()
   await page.getByRole('button', { name: 'Finish workout' }).click()
   await expect(page.getByRole('heading', { name: 'Workout saved' })).toBeVisible()
-  await expect(page.getByText('412.5 kg')).toBeVisible()
+  await expect(page.getByText('412.5 kg', { exact: true })).toBeVisible()
 
   await page.reload()
-  await page.getByRole('tab', { name: 'History' }).click()
+  await page.getByRole('tab', { name: 'Workouts', exact: true }).click()
+  await page.getByRole('button', { name: 'History', exact: true }).click()
   const savedSession = page.getByRole('article', { name: 'Lower Strength at North Gym' })
   await expect(savedSession).toContainText('412.5 kg')
   await savedSession.getByRole('button', { name: 'View details' }).click()
@@ -117,6 +118,7 @@ test('reorders, navigates, reloads, and returns to a skipped set without changin
 
   await page.reload()
   await page.getByRole('button', { name: 'Resume Flexible Strength' }).click()
+  await page.getByRole('button', { name: 'Workout overview', exact: true }).click()
   expect(await page.getByRole('heading', { level: 3 }).allTextContents()).toEqual(['Cable Row', 'Back Squat'])
   await page.getByRole('button', { name: 'Next exercise from Cable Row' }).click()
   await expect(page.getByRole('heading', { name: 'Back Squat', level: 3 })).toBeFocused()
