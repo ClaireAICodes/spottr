@@ -20,6 +20,50 @@ async function context() {
 }
 
 describe('optional selected set timing', () => {
+  it('replaces a retained legacy rest only after acknowledged Log and preserves latest session changes', async () => {
+    const c = await context()
+    await c.service.startSet(c.session.id, c.occurrence.id, c.set.id, { weight: 40, reps: 8 })
+    c.tick('2026-10-13T08:00:12.000Z')
+    const ended = await c.service.completeTimedSet(c.session.id, c.occurrence.id, c.set.id)
+    await c.repository.replaceAll({ ...ended, name: 'Latest session', restTimer: { startedAt: '2026-10-13T07:59:00.000Z', endsAt: '2026-10-13T08:00:30.000Z' } }, [])
+    const before = await c.service.getActive()
+    const update = c.repository.updateActive.bind(c.repository)
+    c.repository.updateActive = async () => { throw new Error('Storage unavailable') }
+    await expect(c.service.logSet(c.occurrence.id, c.set.id, { weight: 43, reps: 7 }, 90, c.session.id)).rejects.toThrow('Storage unavailable')
+    expect(await c.service.getActive()).toEqual(before)
+    c.repository.updateActive = update
+    c.tick('2026-10-13T08:00:15.000Z')
+    const logged = await c.service.logSet(c.occurrence.id, c.set.id, { weight: 43, reps: 7 }, 90, c.session.id)
+    expect(logged.restTimer).toEqual({ startedAt: '2026-10-13T08:00:15.000Z', endsAt: '2026-10-13T08:01:45.000Z' })
+    expect(logged.name).toBe('Latest session')
+    expect(logged.exercises[0].sets[1]).toEqual(before!.exercises[0].sets[1])
+    expect(logged.exercises[0].sets[0]).toMatchObject({ weight: 43, reps: 7, completedAt: '2026-10-13T08:00:15.000Z', timing: ended.exercises[0].sets[0].timing })
+  })
+  it('atomically leaves rest on start, preserves it on failure and rejects an old Stop after the next log', async () => {
+    const c = await context()
+    const actual = { weight: 40, reps: 8 }
+    const resting = await c.service.logSet(c.occurrence.id, c.set.id, actual, 90, c.session.id)
+    const oldRest = resting.restTimer!
+    c.tick('2026-10-13T08:00:30.000Z')
+    const next = c.occurrence.sets[1]
+    const update = c.repository.updateActive.bind(c.repository)
+    c.repository.updateActive = async () => { throw new Error('Storage unavailable') }
+    await expect(c.service.startSet(c.session.id, c.occurrence.id, next.id, actual)).rejects.toThrow('Storage unavailable')
+    expect(await c.service.getActive()).toEqual(resting)
+    c.repository.updateActive = update
+    const performing = await c.service.startSet(c.session.id, c.occurrence.id, next.id, actual)
+    expect(performing.restTimer).toBeUndefined()
+    expect(performing.exercises[0].sets[1].timing?.startedAt).toBe('2026-10-13T08:00:30.000Z')
+    c.tick('2026-10-13T08:00:42.000Z')
+    await c.service.completeTimedSet(c.session.id, c.occurrence.id, next.id)
+    const logged = await c.service.logSet(c.occurrence.id, next.id, actual, 90, c.session.id)
+    expect(logged.restTimer?.startedAt).toBe('2026-10-13T08:00:42.000Z')
+    expect(elapsedSetSeconds(logged.restTimer!.startedAt, Date.parse('2026-10-13T08:00:42.000Z'))).toBe(0)
+    await expect(c.service.stopRest(c.session.id, oldRest)).rejects.toThrow('Rest changed')
+    expect(await c.service.getActive()).toEqual(logged)
+    expect(logged.exercises[0].sets[0]).toEqual(resting.exercises[0].sets[0])
+    expect(await c.workouts.get(c.template.id)).toEqual(c.template)
+  })
   it('rejects invalid Log chronology without mutation and exports accepted data after clock recovery', async () => {
     const c = await context()
     await c.service.startSet(c.session.id, c.occurrence.id, c.set.id, { weight: 42.5, reps: 8 })

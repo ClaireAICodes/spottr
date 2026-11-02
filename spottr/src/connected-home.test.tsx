@@ -34,6 +34,7 @@ describe('connected Home journey', () => {
     render(<App {...f} />)
     await user.click(await screen.findByRole('button', { name: 'Resume Progress Workout' }))
     expect(screen.getByText('0 of 3 sets logged · 0 skipped · 3 remaining')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Workout overview' }))
     await user.click(screen.getByRole('button', { name: 'Skip Original Row set 1' }))
     expect(await screen.findByText('0 of 3 sets logged · 1 skipped · 2 remaining')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Return to Original Row set 1' }))
@@ -185,7 +186,7 @@ describe('connected Home journey', () => {
     await user.click(await screen.findByRole('button', { name: 'Resume Connected Workout' }))
     expect(await screen.findByRole('heading', { name: 'Current Row' })).toBeInTheDocument()
     expect(screen.getByText('Current setup')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Log Current Row set 1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Start Current Row set 1' })).toBeInTheDocument()
     expect(await f.sessionService.getActive()).toEqual(snapshot)
   })
 

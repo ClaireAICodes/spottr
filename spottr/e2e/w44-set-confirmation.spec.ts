@@ -3,6 +3,33 @@ import { expect, test } from '@playwright/test'
 for (const [width, height] of [[320, 667], [390, 667]]) {
   test(`timed confirmation survives reload and saves actuals at ${width}x${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height })
+    // Observe real entrance motion without disabling or pausing it.
+    await page.addInitScript(() => {
+      const observations: unknown[] = []
+      Object.assign(window, { confirmationMotion: observations })
+      document.addEventListener('animationstart', event => {
+        const target = event.target
+        if (!(target instanceof HTMLElement) || !target.matches('.confirm-dialog')) return
+        const sample = () => ({
+          transform: getComputedStyle(target).transform,
+          controls: Array.from(target.querySelectorAll('input, button'), el => {
+            const { x, y, width, height } = el.getBoundingClientRect()
+            return { label: el.getAttribute('aria-label') || el.textContent, x, y, width, height }
+          }),
+          animations: target.getAnimations().map(animation => ({
+            playState: animation.playState, currentTime: animation.currentTime,
+          })),
+        })
+        const observation = { name: event.animationName, before: sample(), frames: [] as unknown[], after: null as unknown }
+        observations.push(observation)
+        const frame = () => {
+          observation.frames.push(sample())
+          if (target.getAnimations().some(animation => animation.playState === 'running')) requestAnimationFrame(frame)
+          else observation.after = sample()
+        }
+        requestAnimationFrame(frame)
+      }, true)
+    })
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     await page.goto('/spottr/')
@@ -31,6 +58,20 @@ for (const [width, height] of [[320, 667], [390, 667]]) {
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('heading')).toBeFocused()
     await expect(page.getByRole('timer', { name: 'Rest timer' })).toHaveCount(0)
+    // Visibility/focus do not imply that transformed geometry has settled.
+    await expect.poll(() => dialog.evaluate(el => el.getAnimations({ subtree: true })
+      .filter(animation => animation.playState === 'running' || animation.pending).length)).toBe(0)
+    const motion = await page.evaluate(() => (window as unknown as { confirmationMotion: Array<{
+      name: string; before: { transform: string; animations: Array<{ playState: string }> }; after: unknown
+    }> }).confirmationMotion)
+    console.log(JSON.stringify({ kind: 'confirmation-motion', width, height, motion,
+      settled: await dialog.locator('input, button').evaluateAll(elements => elements.map(el => {
+        const { x, y, width, height } = el.getBoundingClientRect()
+        return { x, y, width, height }
+      })) }))
+    expect(motion.some(observation => observation.name === 'sheet-arrive'
+      && observation.before.transform !== 'none'
+      && observation.before.animations.some(animation => animation.playState === 'running'))).toBe(true)
     for (const control of await dialog.locator('input, button').all()) {
       const box = await control.boundingBox()
       expect(box).not.toBeNull()

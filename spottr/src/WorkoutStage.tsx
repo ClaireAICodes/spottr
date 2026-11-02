@@ -6,7 +6,7 @@ export function WorkoutStage({ title, setNumber, totalSets, target, onPrimary, o
   setNumber: number
   totalSets: number
   target: string
-  phase: 'ready'
+  phase: 'ready' | 'performing' | 'confirming' | 'rest'
   onPrimary?: () => void
   onOverview: () => void
   reference?: ReactNode

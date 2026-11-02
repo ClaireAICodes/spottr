@@ -38,5 +38,5 @@ export function reduceSessionFlow(state: Stage | null, event: FlowEvent, persist
     .map(set => ({ exercise, set })))
   const current = remaining.find(({ set }) => set.timing) ?? remaining[0]
   if (!current) return null
-  return { phase: phaseFor(current.set), sessionId: persisted.id, occurrenceId: current.exercise.id, setId: current.set.id }
+  return { phase: current.set.timing ? phaseFor(current.set) : persisted.restTimer ? 'rest' : 'ready', sessionId: persisted.id, occurrenceId: current.exercise.id, setId: current.set.id }
 }

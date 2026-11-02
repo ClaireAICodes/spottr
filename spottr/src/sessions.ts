@@ -275,7 +275,8 @@ export function createSessionService(
           if (!set || set.completedAt || set.skippedAt || set.timing) throw new Error('Set is not available to start')
           if (current.exercises.some(exercise => exercise.sets.some(set => set.timing && !set.timing.endedAt))) throw new Error('Complete or skip the running set first')
           if (!Number.isFinite(Date.parse(timestamp)) || Date.parse(timestamp) < Date.parse(current.startedAt)) throw new Error('Clock precedes session start')
-          return { ...current, updatedAt: timestamp, exercises: current.exercises.map(exercise => exercise.id !== exerciseId ? exercise : {
+          const { restTimer: _restTimer, ...withoutRest } = current
+          return { ...withoutRest, updatedAt: timestamp, exercises: current.exercises.map(exercise => exercise.id !== exerciseId ? exercise : {
             ...exercise, sets: exercise.sets.map(set => set.id !== setId ? set : { ...set, ...chosen, timing: { startedAt: timestamp } }),
           }) }
         })
@@ -346,7 +347,7 @@ export function createSessionService(
           const updated: WorkoutSession = {
             ...current,
             updatedAt: timestamp,
-            ...(restSeconds === undefined || current.restTimer ? {} : {
+            ...(restSeconds === undefined ? {} : {
               restTimer: {
                 startedAt: timestamp,
                 endsAt: new Date(Date.parse(timestamp) + restSeconds * 1000).toISOString(),

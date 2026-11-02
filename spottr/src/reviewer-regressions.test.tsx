@@ -99,10 +99,14 @@ describe('reviewer regressions', () => {
     const session = await sessionService.start(template.id, 'Gym')
     render(<ActiveSession initialSession={session} sessionService={sessionService} exerciseService={exerciseService} onSessionChange={() => undefined} onComplete={() => undefined} onExit={() => undefined} settings={{ ...DEFAULT_SETTINGS, prCelebrations: false }} />)
 
-    await user.click(screen.getByRole('button', { name: /log squat set 1/i }))
+    await user.click(screen.getByRole('button', { name: /start squat set 1/i }))
+    await user.click(await screen.findByRole('button', { name: /complete squat set 1/i }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Log set' }))
     const firstAnnouncement = await screen.findByRole('status')
     expect(firstAnnouncement).toHaveTextContent('Suggested rest: 90 seconds')
-    await user.click(screen.getByRole('button', { name: /log squat set 2/i }))
+    await user.click(screen.getByRole('button', { name: 'Start next set' }))
+    await user.click(await screen.findByRole('button', { name: /complete squat set 2/i }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Log set' }))
     await user.click(screen.getByRole('button', { name: 'Workout overview' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /logged squat set 2/i })).toBeDisabled())
 
@@ -134,6 +138,7 @@ describe('reviewer regressions', () => {
   })
 
   it('does not mount an active session with fallback units while persisted settings load', async () => {
+    const user = userEvent.setup()
     let resolveSettings!: (settings: typeof DEFAULT_SETTINGS) => void
     const settingsService = {
       get: () => new Promise<typeof DEFAULT_SETTINGS>((resolve) => { resolveSettings = resolve }),
@@ -152,6 +157,7 @@ describe('reviewer regressions', () => {
     expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
     resolveSettings({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
 
+    await user.click(await screen.findByRole('button', { name: 'Workout overview' }))
     expect(await screen.findByLabelText('Squat set 1 weight (lb)')).toHaveValue(44.1)
   })
 
@@ -224,6 +230,7 @@ describe('reviewer regressions', () => {
     const view = render(<App {...props} settingsService={createSettingsService(createMemorySettingsRepository(DEFAULT_SETTINGS))} />)
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: /resume strength/i }))
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Workout overview' }))
     expect(await screen.findByLabelText('Squat set 1 weight (kg)')).toHaveValue(20)
 
     try {
@@ -233,6 +240,7 @@ describe('reviewer regressions', () => {
       expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
       await waitFor(() => expect(typeof resolveReplacement).toBe('function'))
       resolveReplacement({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
+      await user.click(await screen.findByRole('button', { name: 'Workout overview' }))
       expect(await screen.findByLabelText('Squat set 1 weight (lb)')).toHaveValue(44.1)
     } finally {
       resolveReplacement?.({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
@@ -250,6 +258,7 @@ describe('reviewer regressions', () => {
     const view = render(<App {...props} settingsService={createSettingsService(createMemorySettingsRepository(DEFAULT_SETTINGS))} />)
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: /resume strength/i }))
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Workout overview' }))
     expect(await screen.findByLabelText('Squat set 1 weight (kg)')).toHaveValue(20)
     let rejectFirst: ((error: Error) => void) | undefined
     let resolveRetry: ((settings: typeof DEFAULT_SETTINGS) => void) | undefined
@@ -276,6 +285,7 @@ describe('reviewer regressions', () => {
       expect(screen.queryByLabelText(/squat set 1 weight/i)).not.toBeInTheDocument()
       await waitFor(() => expect(typeof resolveRetry).toBe('function'))
       resolveRetry!({ ...DEFAULT_SETTINGS, weightUnit: 'lb' })
+      await user.click(await screen.findByRole('button', { name: 'Workout overview' }))
       expect(await screen.findByLabelText('Squat set 1 weight (lb)')).toHaveValue(44.1)
       expect(calls).toBe(2)
     } finally {

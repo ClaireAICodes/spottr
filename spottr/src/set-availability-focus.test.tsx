@@ -34,6 +34,7 @@ describe('set availability focus settlement', () => {
     const props = await fixture()
     const user = userEvent.setup()
     render(<ActiveSession {...props} />)
+    await keyboardActivate(user, screen.getByRole('button', { name: 'Workout overview' }))
     const trigger = screen.getByRole('button', { name: 'Skip Row set 1' })
     await keyboardActivate(user, trigger)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Return to Row set 1' })).toHaveFocus())
@@ -53,6 +54,7 @@ describe('set availability focus settlement', () => {
     const user = userEvent.setup()
     render(<ActiveSession {...props} />)
     const name = method === 'skipSet' ? 'Skip Row set 1' : 'Return to Row set 1'
+    await keyboardActivate(user, screen.getByRole('button', { name: 'Workout overview' }))
     const trigger = screen.getByRole('button', { name })
     await keyboardActivate(user, trigger)
     expect(await screen.findByRole('alert')).toHaveTextContent('write failed')
@@ -71,6 +73,7 @@ describe('set availability focus settlement', () => {
     const heldWrite = vi.spyOn(props.sessionService, 'skipSet').mockImplementation(async (...args) => { await gate.promise; return original(...args) })
     const user = userEvent.setup()
     const view = render(<><button>Outside</button><ActiveSession {...props} /></>)
+    await keyboardActivate(user, screen.getByRole('button', { name: 'Workout overview' }))
     await keyboardActivate(user, screen.getByRole('button', { name: 'Skip Row set 1' }))
     expect(screen.getByRole('button', { name: 'Skip Row set 1' })).toBeDisabled()
     if (departure === 'unmount') view.rerender(<button>Outside</button>)
